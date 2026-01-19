@@ -1,0 +1,317 @@
+{
+  "functional_tests": {
+    "rest_api": {
+      "test_cases": [
+        {
+          "id": "FT-REST-001",
+          "name": "List items - empty store",
+          "description": "GET /api/v1/items returns 200 with empty array when store is empty",
+          "method": "GET",
+          "endpoint": "/api/v1/items",
+          "expected_status": 200,
+          "expected_response": {
+            "success": true,
+            "data": []
+          }
+        },
+        {
+          "id": "FT-REST-002",
+          "name": "Create item - valid",
+          "description": "POST /api/v1/items with valid data returns 201 with created item",
+          "method": "POST",
+          "endpoint": "/api/v1/items",
+          "request_body": {
+            "name": "Test Item",
+            "description": "A test item",
+            "price": 19.99
+          },
+          "expected_status": 201,
+          "expected_response": {
+            "success": true
+          }
+        },
+        {
+          "id": "FT-REST-003",
+          "name": "Create item - missing name",
+          "description": "POST /api/v1/items with missing name returns 400 validation error",
+          "method": "POST",
+          "endpoint": "/api/v1/items",
+          "request_body": {
+            "description": "A test item",
+            "price": 19.99
+          },
+          "expected_status": 400,
+          "expected_error": "name cannot be empty"
+        },
+        {
+          "id": "FT-REST-004",
+          "name": "Create item - negative price",
+          "description": "POST /api/v1/items with negative price returns 400 validation error",
+          "method": "POST",
+          "endpoint": "/api/v1/items",
+          "request_body": {
+            "name": "Test Item",
+            "price": -10.00
+          },
+          "expected_status": 400,
+          "expected_error": "price cannot be negative"
+        },
+        {
+          "id": "FT-REST-005",
+          "name": "Create item - invalid JSON",
+          "description": "POST /api/v1/items with invalid JSON returns 400",
+          "method": "POST",
+          "endpoint": "/api/v1/items",
+          "request_body_raw": "invalid json",
+          "expected_status": 400,
+          "expected_error": "invalid request body"
+        },
+        {
+          "id": "FT-REST-006",
+          "name": "Get item - exists",
+          "description": "GET /api/v1/items/{id} returns 200 with item when it exists",
+          "method": "GET",
+          "endpoint": "/api/v1/items/{id}",
+          "expected_status": 200,
+          "expected_response": {
+            "success": true
+          }
+        },
+        {
+          "id": "FT-REST-007",
+          "name": "Get item - not found",
+          "description": "GET /api/v1/items/{id} returns 404 when item does not exist",
+          "method": "GET",
+          "endpoint": "/api/v1/items/non-existent-id",
+          "expected_status": 404,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-REST-008",
+          "name": "Update item - exists",
+          "description": "PUT /api/v1/items/{id} returns 200 with updated item",
+          "method": "PUT",
+          "endpoint": "/api/v1/items/{id}",
+          "request_body": {
+            "name": "Updated Item",
+            "description": "Updated description",
+            "price": 29.99
+          },
+          "expected_status": 200,
+          "expected_response": {
+            "success": true
+          }
+        },
+        {
+          "id": "FT-REST-009",
+          "name": "Update item - not found",
+          "description": "PUT /api/v1/items/{id} returns 404 when item does not exist",
+          "method": "PUT",
+          "endpoint": "/api/v1/items/non-existent-id",
+          "request_body": {
+            "name": "Updated Item",
+            "price": 29.99
+          },
+          "expected_status": 404,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-REST-010",
+          "name": "List items - with data",
+          "description": "GET /api/v1/items returns 200 with array containing items",
+          "method": "GET",
+          "endpoint": "/api/v1/items",
+          "expected_status": 200,
+          "expected_response": {
+            "success": true
+          },
+          "expected_min_items": 1
+        },
+        {
+          "id": "FT-REST-011",
+          "name": "Delete item - exists",
+          "description": "DELETE /api/v1/items/{id} returns 204 when item exists",
+          "method": "DELETE",
+          "endpoint": "/api/v1/items/{id}",
+          "expected_status": 204
+        },
+        {
+          "id": "FT-REST-012",
+          "name": "Delete item - not found",
+          "description": "DELETE /api/v1/items/{id} returns 404 when item does not exist",
+          "method": "DELETE",
+          "endpoint": "/api/v1/items/non-existent-id",
+          "expected_status": 404,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-REST-013",
+          "name": "Health check",
+          "description": "GET /health returns 200 with healthy status",
+          "method": "GET",
+          "endpoint": "/health",
+          "expected_status": 200,
+          "expected_response": {
+            "success": true,
+            "data": {
+              "status": "healthy"
+            }
+          }
+        },
+        {
+          "id": "FT-REST-014",
+          "name": "Readiness check",
+          "description": "GET /ready returns 200 with ready status",
+          "method": "GET",
+          "endpoint": "/ready",
+          "expected_status": 200,
+          "expected_response": {
+            "success": true,
+            "data": {
+              "status": "ready"
+            }
+          }
+        },
+        {
+          "id": "FT-REST-015",
+          "name": "CRUD workflow - complete lifecycle",
+          "description": "Complete CRUD lifecycle: create, read, update, delete",
+          "workflow": [
+            {"action": "create", "method": "POST", "endpoint": "/api/v1/items"},
+            {"action": "read", "method": "GET", "endpoint": "/api/v1/items/{id}"},
+            {"action": "update", "method": "PUT", "endpoint": "/api/v1/items/{id}"},
+            {"action": "verify_update", "method": "GET", "endpoint": "/api/v1/items/{id}"},
+            {"action": "delete", "method": "DELETE", "endpoint": "/api/v1/items/{id}"},
+            {"action": "verify_delete", "method": "GET", "endpoint": "/api/v1/items/{id}"}
+          ]
+        },
+        {
+          "id": "FT-REST-016",
+          "name": "Concurrent creates",
+          "description": "10 concurrent POST requests should all succeed",
+          "concurrent_requests": 10,
+          "method": "POST",
+          "endpoint": "/api/v1/items",
+          "expected_status": 201
+        },
+        {
+          "id": "FT-REST-017",
+          "name": "Request with X-Request-ID header",
+          "description": "Request with X-Request-ID header should return same ID in response",
+          "method": "GET",
+          "endpoint": "/health",
+          "headers": {
+            "X-Request-ID": "test-request-id-12345"
+          },
+          "expected_status": 200,
+          "expected_headers": {
+            "X-Request-ID": "test-request-id-12345"
+          }
+        }
+      ]
+    },
+    "websocket": {
+      "test_cases": [
+        {
+          "id": "FT-WS-001",
+          "name": "Connect to WebSocket",
+          "description": "WebSocket connection should be established successfully",
+          "endpoint": "/ws",
+          "expected": "connection_established"
+        },
+        {
+          "id": "FT-WS-002",
+          "name": "Receive random value",
+          "description": "Client should receive a message with valid format",
+          "endpoint": "/ws",
+          "expected_message_format": {
+            "type": "random_value",
+            "value": "integer",
+            "timestamp": "RFC3339"
+          }
+        },
+        {
+          "id": "FT-WS-003",
+          "name": "Receive multiple values",
+          "description": "Client should receive 5 messages within 7 seconds",
+          "endpoint": "/ws",
+          "expected_messages": 5,
+          "timeout_seconds": 7
+        },
+        {
+          "id": "FT-WS-004",
+          "name": "Values are random",
+          "description": "Received values should not all be the same",
+          "endpoint": "/ws",
+          "messages_to_collect": 5,
+          "expected": "values_vary"
+        },
+        {
+          "id": "FT-WS-005",
+          "name": "Message interval ~1 second",
+          "description": "Messages should arrive approximately every 1 second (900-1100ms)",
+          "endpoint": "/ws",
+          "expected_interval_ms": {
+            "min": 900,
+            "max": 1100
+          }
+        },
+        {
+          "id": "FT-WS-006",
+          "name": "Multiple concurrent clients",
+          "description": "5 concurrent clients should all receive messages",
+          "endpoint": "/ws",
+          "concurrent_clients": 5,
+          "expected": "all_receive_messages"
+        },
+        {
+          "id": "FT-WS-007",
+          "name": "Client disconnect handling",
+          "description": "Server should handle client disconnect gracefully",
+          "endpoint": "/ws",
+          "action": "connect_then_disconnect",
+          "expected": "graceful_handling"
+        },
+        {
+          "id": "FT-WS-008",
+          "name": "Reconnection after disconnect",
+          "description": "Client should be able to reconnect after disconnecting",
+          "endpoint": "/ws",
+          "action": "connect_disconnect_reconnect",
+          "expected": "reconnection_successful"
+        }
+      ]
+    }
+  },
+  "test_data": {
+    "valid_items": [
+      {
+        "name": "Test Item 1",
+        "description": "First test item",
+        "price": 19.99
+      },
+      {
+        "name": "Test Item 2",
+        "description": "Second test item",
+        "price": 29.99
+      },
+      {
+        "name": "Test Item 3",
+        "description": "Third test item",
+        "price": 39.99
+      }
+    ],
+    "invalid_items": [
+      {
+        "name": "",
+        "price": 10.00,
+        "expected_error": "name cannot be empty"
+      },
+      {
+        "name": "Test",
+        "price": -10.00,
+        "expected_error": "price cannot be negative"
+      }
+    ]
+  }
+}
