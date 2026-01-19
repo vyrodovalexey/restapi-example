@@ -1,0 +1,82 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+coverage.out
+coverage.html
+coverage-functional.out
+*.test
+*.prof
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.docker/
+.dockerignore
+
+# Kubernetes and Helm
+charts/
+deploy/
+k8s/
+*.yaml
+!go.mod
+!go.sum
+
+# Makefile (not needed in container)
+Makefile
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+credentials.json
+secrets/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go specific
+vendor/
+go.work
+go.work.sum
