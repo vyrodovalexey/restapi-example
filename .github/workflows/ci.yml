@@ -308,6 +308,8 @@ jobs:
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
+        permissions:
+          packages: write
         with:
           image: ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.version }}
           artifact-name: sbom-${{ steps.meta.outputs.version }}.spdx.json
