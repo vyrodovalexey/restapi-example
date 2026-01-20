@@ -313,10 +313,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: server-binary
-          path:
-           - bin/server-linux-amd64
-           - bin/server-darwin-arm64
-          retention-days: 5
+          path: bin/server*
+          retention-days: 7
 
   # ===========================================================================
   # Tag-only Jobs: Docker Build & Push, Trivy Scan
