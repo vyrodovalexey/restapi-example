@@ -221,3 +221,74 @@ func TestAPIKeyHeader_Constant(t *testing.T) {
 		t.Errorf("APIKeyHeader = %q, want %q", auth.APIKeyHeader, "X-API-Key")
 	}
 }
+
+func TestAPIKeyAuthenticator_FullIteration(t *testing.T) {
+	t.Parallel()
+
+	// Arrange - Create authenticator with multiple keys
+	// The timing fix ensures all keys are always compared
+	authenticator, err := auth.NewAPIKeyAuthenticator(
+		"key-alpha:service-a,key-beta:service-b,key-gamma:service-c",
+	)
+	if err != nil {
+		t.Fatalf("NewAPIKeyAuthenticator() error = %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		apiKey      string
+		wantSubject string
+		wantErr     bool
+		wantErrIs   error
+	}{
+		{
+			name:        "first key matches",
+			apiKey:      "key-alpha",
+			wantSubject: "service-a",
+		},
+		{
+			name:        "middle key matches",
+			apiKey:      "key-beta",
+			wantSubject: "service-b",
+		},
+		{
+			name:        "last key matches",
+			apiKey:      "key-gamma",
+			wantSubject: "service-c",
+		},
+		{
+			name:      "no key matches",
+			apiKey:    "key-delta",
+			wantErr:   true,
+			wantErrIs: auth.ErrInvalidAPIKey,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.Header.Set("X-API-Key", tt.apiKey)
+
+			info, authErr := authenticator.Authenticate(req)
+
+			if tt.wantErr {
+				if authErr == nil {
+					t.Fatal("Authenticate() error = nil, want error")
+				}
+				if tt.wantErrIs != nil && !errors.Is(authErr, tt.wantErrIs) {
+					t.Errorf("Authenticate() error = %v, want errors.Is %v", authErr, tt.wantErrIs)
+				}
+				return
+			}
+
+			if authErr != nil {
+				t.Fatalf("Authenticate() error = %v, want nil", authErr)
+			}
+			if info.Subject != tt.wantSubject {
+				t.Errorf("Subject = %q, want %q", info.Subject, tt.wantSubject)
+			}
+		})
+	}
+}

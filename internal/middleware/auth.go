@@ -73,14 +73,17 @@ func Auth(
 }
 
 // isPublicPath checks whether the given path is a public path that
-// does not require authentication.
+// does not require authentication. Matches exact public paths and
+// their sub-paths (e.g. /health and /health/live), but rejects
+// paths that merely share a prefix without a path separator
+// (e.g. /healthXXX is not public).
 func isPublicPath(path string) bool {
 	if publicPaths[path] {
 		return true
 	}
 
 	for p := range publicPaths {
-		if strings.HasPrefix(path, p) {
+		if strings.HasPrefix(path, p+"/") {
 			return true
 		}
 	}

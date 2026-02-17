@@ -694,3 +694,144 @@ func TestVersion(t *testing.T) {
 		t.Errorf("Version = %s, want 1.0.0", Version)
 	}
 }
+
+func TestRESTHandler_ReadyCheck(t *testing.T) {
+	// Arrange
+	ms := newMockStore()
+	logger := zap.NewNop()
+	h := NewRESTHandler(ms, logger)
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	h.ReadyCheck(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("ReadyCheck() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var response model.APIResponse[ReadyResponse]
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	if !response.Success {
+		t.Error("ReadyCheck() response.Success = false, want true")
+	}
+	if response.Data.Status != "ready" {
+		t.Errorf("ReadyCheck() status = %s, want ready", response.Data.Status)
+	}
+}
+
+func TestRESTHandler_CreateItem_BodyTooLarge(t *testing.T) {
+	// Arrange
+	ms := newMockStore()
+	logger := zap.NewNop()
+	h := NewRESTHandler(ms, logger)
+
+	// Create a body larger than maxRequestBodySize (1 MB)
+	largeBody := bytes.Repeat([]byte("a"), maxRequestBodySize+1)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/items", bytes.NewReader(largeBody))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	// Act
+	h.CreateItem(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("CreateItem() status = %d, want %d for oversized body", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestRESTHandler_UpdateItem_BodyTooLarge(t *testing.T) {
+	// Arrange
+	ms := newMockStore()
+	logger := zap.NewNop()
+	h := NewRESTHandler(ms, logger)
+
+	// Create a body larger than maxRequestBodySize (1 MB)
+	largeBody := bytes.Repeat([]byte("a"), maxRequestBodySize+1)
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/items/123", bytes.NewReader(largeBody))
+	req = mux.SetURLVars(req, map[string]string{"id": "123"})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	// Act
+	h.UpdateItem(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("UpdateItem() status = %d, want %d for oversized body", rr.Code, http.StatusBadRequest)
+	}
+}
+
+func TestRESTHandler_DeleteItem_NoContent(t *testing.T) {
+	// Arrange
+	ms := newMockStore()
+	ms.items["123"] = model.Item{ID: "123", Name: "Test", Price: 10}
+	logger := zap.NewNop()
+	h := NewRESTHandler(ms, logger)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/items/123", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "123"})
+	rr := httptest.NewRecorder()
+
+	// Act
+	h.DeleteItem(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusNoContent {
+		t.Errorf("DeleteItem() status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+
+	// Verify no body is written (data is nil for NoContent)
+	body := rr.Body.String()
+	if body != "" {
+		t.Errorf("DeleteItem() body = %q, want empty body for NoContent", body)
+	}
+}
+
+// errorWriter is a mock ResponseWriter that always fails on Write.
+type errorWriter struct {
+	http.ResponseWriter
+	header     http.Header
+	statusCode int
+}
+
+func newErrorWriter() *errorWriter {
+	return &errorWriter{
+		header: make(http.Header),
+	}
+}
+
+func (w *errorWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *errorWriter) WriteHeader(code int) {
+	w.statusCode = code
+}
+
+func (w *errorWriter) Write(_ []byte) (int, error) {
+	return 0, errors.New("write error")
+}
+
+func TestRESTHandler_WriteJSON_EncoderError(t *testing.T) {
+	// Arrange
+	ms := newMockStore()
+	logger := zap.NewNop()
+	h := NewRESTHandler(ms, logger)
+
+	w := newErrorWriter()
+
+	// Act - writeJSON with a value that will trigger encoder.Encode which calls Write
+	h.writeJSON(w, http.StatusOK, map[string]string{"key": "value"})
+
+	// Assert - Should not panic, error is logged
+	if w.statusCode != http.StatusOK {
+		t.Errorf("writeJSON() status = %d, want %d", w.statusCode, http.StatusOK)
+	}
+}

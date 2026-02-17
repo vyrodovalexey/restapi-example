@@ -75,7 +75,7 @@ func (s *MemoryStore) Create(ctx context.Context, item *model.Item) (*model.Item
 	}
 
 	if item == nil {
-		return nil, fmt.Errorf("create item: item cannot be nil")
+		return nil, fmt.Errorf("create item: %w", ErrNilItem)
 	}
 
 	s.mu.Lock()
@@ -109,7 +109,7 @@ func (s *MemoryStore) Update(ctx context.Context, id string, item *model.Item) (
 	}
 
 	if item == nil {
-		return nil, fmt.Errorf("update item: item cannot be nil")
+		return nil, fmt.Errorf("update item: %w", ErrNilItem)
 	}
 
 	s.mu.Lock()

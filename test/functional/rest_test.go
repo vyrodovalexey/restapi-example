@@ -12,26 +12,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// testServer is a shared test server instance for REST API tests.
-var (
-	restTestServer     *TestServer
-	restTestServerOnce sync.Once
-	restTestClient     *HTTPClient
-)
-
-// setupRESTTestServer initializes the shared test server for REST tests.
-func setupRESTTestServer(t *testing.T) (*TestServer, *HTTPClient) {
-	t.Helper()
-
-	restTestServerOnce.Do(func() {
-		restTestServer = NewTestServer(t)
-		restTestServer.Start()
-		restTestClient = NewHTTPClient(t, restTestServer.BaseURL)
-	})
-
-	return restTestServer, restTestClient
-}
-
 // TestFunctional_REST_001_ListItemsEmptyStore tests listing items when store is empty.
 // FT-REST-001: List items - empty store (GET /api/v1/items -> 200, empty array)
 func TestFunctional_REST_001_ListItemsEmptyStore(t *testing.T) {

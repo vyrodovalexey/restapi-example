@@ -2,12 +2,17 @@
 package middleware
 
 import (
+	"bufio"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewResponseWriter(t *testing.T) {
@@ -755,5 +760,246 @@ func TestMiddlewareChainIntegration(t *testing.T) {
 	}
 	if rr.Header().Get("Access-Control-Allow-Origin") == "" {
 		t.Error("Response should have CORS headers")
+	}
+}
+
+// mockHijacker implements http.ResponseWriter and http.Hijacker.
+type mockHijacker struct {
+	http.ResponseWriter
+	hijackCalled bool
+}
+
+func (m *mockHijacker) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	m.hijackCalled = true
+	return nil, nil, nil
+}
+
+// mockFlusher implements http.ResponseWriter and http.Flusher.
+type mockFlusher struct {
+	http.ResponseWriter
+	flushCalled bool
+}
+
+func (m *mockFlusher) Flush() {
+	m.flushCalled = true
+}
+
+func TestResponseWriter_Hijack_WithHijacker(t *testing.T) {
+	// Arrange
+	inner := &mockHijacker{ResponseWriter: httptest.NewRecorder()}
+	rw := newResponseWriter(inner)
+
+	// Act
+	_, _, err := rw.Hijack()
+
+	// Assert
+	if err != nil {
+		t.Errorf("Hijack() error = %v, want nil", err)
+	}
+	if !inner.hijackCalled {
+		t.Error("Hijack() should delegate to inner ResponseWriter")
+	}
+}
+
+func TestResponseWriter_Hijack_WithoutHijacker(t *testing.T) {
+	// Arrange - httptest.NewRecorder does NOT implement http.Hijacker
+	rw := newResponseWriter(httptest.NewRecorder())
+
+	// Act
+	conn, buf, err := rw.Hijack()
+
+	// Assert
+	if err != http.ErrNotSupported {
+		t.Errorf("Hijack() error = %v, want %v", err, http.ErrNotSupported)
+	}
+	if conn != nil {
+		t.Error("Hijack() conn should be nil when not supported")
+	}
+	if buf != nil {
+		t.Error("Hijack() buf should be nil when not supported")
+	}
+}
+
+func TestResponseWriter_Flush_WithFlusher(t *testing.T) {
+	// Arrange
+	inner := &mockFlusher{ResponseWriter: httptest.NewRecorder()}
+	rw := newResponseWriter(inner)
+
+	// Act
+	rw.Flush()
+
+	// Assert
+	if !inner.flushCalled {
+		t.Error("Flush() should delegate to inner ResponseWriter")
+	}
+}
+
+func TestResponseWriter_Flush_WithoutFlusher(t *testing.T) {
+	// Arrange - use a ResponseWriter that does NOT implement http.Flusher
+	rw := newResponseWriter(&nonFlusherWriter{header: make(http.Header)})
+
+	// Act - should not panic
+	rw.Flush()
+
+	// Assert - no panic means success
+}
+
+// nonFlusherWriter is a ResponseWriter that does NOT implement http.Flusher.
+type nonFlusherWriter struct {
+	header http.Header
+}
+
+func (w *nonFlusherWriter) Header() http.Header         { return w.header }
+func (w *nonFlusherWriter) Write(b []byte) (int, error) { return len(b), nil }
+func (w *nonFlusherWriter) WriteHeader(_ int)           {}
+
+func TestNormalizeRequestPath_WithMuxRouteTemplate(t *testing.T) {
+	// Arrange
+	router := mux.NewRouter()
+	var capturedPath string
+
+	router.HandleFunc("/api/v1/items/{id}", func(_ http.ResponseWriter, r *http.Request) {
+		capturedPath = normalizeRequestPath(r)
+	}).Methods(http.MethodGet)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/items/123", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	router.ServeHTTP(rr, req)
+
+	// Assert
+	if capturedPath != "/api/v1/items/{id}" {
+		t.Errorf("normalizeRequestPath() = %s, want /api/v1/items/{id}", capturedPath)
+	}
+}
+
+func TestNormalizeRequestPath_WithoutMuxRoute(t *testing.T) {
+	// Arrange - request without mux route context
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/items/123", nil)
+
+	// Act
+	path := normalizeRequestPath(req)
+
+	// Assert
+	if path != "/api/v1/items/123" {
+		t.Errorf("normalizeRequestPath() = %s, want /api/v1/items/123", path)
+	}
+}
+
+func TestCORS_Wildcard_NoCredentials(t *testing.T) {
+	// Arrange
+	allowedOrigins := []string{"*"}
+	allowedMethods := []string{"GET", "POST"}
+	allowedHeaders := []string{"Content-Type"}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := CORS(allowedOrigins, allowedMethods, allowedHeaders)
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "http://any-origin.com")
+	rr := httptest.NewRecorder()
+
+	// Act
+	wrapped.ServeHTTP(rr, req)
+
+	// Assert - Wildcard should NOT set Access-Control-Allow-Credentials
+	credentials := rr.Header().Get("Access-Control-Allow-Credentials")
+	if credentials != "" {
+		t.Errorf("Access-Control-Allow-Credentials = %q, want empty for wildcard origin", credentials)
+	}
+}
+
+func TestLogging_HealthPathsLoggedAtDebug(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		wantInfo bool // true = Info level, false = Debug level
+	}{
+		{"health path at debug", "/health", false},
+		{"ready path at debug", "/ready", false},
+		{"metrics path at debug", "/metrics", false},
+		{"api path at info", "/api/v1/items", true},
+		{"other path at info", "/other", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			core, logs := observer.New(zapcore.DebugLevel)
+			logger := zap.New(core)
+
+			handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			middleware := Logging(logger)
+			wrapped := middleware(handler)
+
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			rr := httptest.NewRecorder()
+
+			// Act
+			wrapped.ServeHTTP(rr, req)
+
+			// Assert
+			allLogs := logs.All()
+			if len(allLogs) != 1 {
+				t.Fatalf("expected 1 log entry, got %d", len(allLogs))
+			}
+
+			entry := allLogs[0]
+			if tt.wantInfo {
+				if entry.Level != zapcore.InfoLevel {
+					t.Errorf("log level = %v, want Info for path %s", entry.Level, tt.path)
+				}
+			} else {
+				if entry.Level != zapcore.DebugLevel {
+					t.Errorf("log level = %v, want Debug for path %s", entry.Level, tt.path)
+				}
+			}
+		})
+	}
+}
+
+func TestRequestID_StoredInContext(t *testing.T) {
+	// Arrange
+	var contextRequestID interface{}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contextRequestID = r.Context().Value(RequestIDKey)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	middleware := RequestID()
+	wrapped := middleware(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	wrapped.ServeHTTP(rr, req)
+
+	// Assert
+	if contextRequestID == nil {
+		t.Error("Request ID should be stored in context")
+	}
+
+	requestIDStr, ok := contextRequestID.(string)
+	if !ok {
+		t.Fatalf("Request ID in context should be a string, got %T", contextRequestID)
+	}
+	if requestIDStr == "" {
+		t.Error("Request ID in context should not be empty")
+	}
+
+	// Should match the response header
+	responseID := rr.Header().Get(RequestIDHeader)
+	if requestIDStr != responseID {
+		t.Errorf("Context request ID = %s, response header = %s, should match", requestIDStr, responseID)
 	}
 }

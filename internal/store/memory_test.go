@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -724,4 +725,51 @@ func TestMemoryStore_Timestamps(t *testing.T) {
 func TestMemoryStore_ImplementsInterface(t *testing.T) {
 	// Assert that MemoryStore implements Store interface
 	var _ Store = (*MemoryStore)(nil)
+}
+
+func TestMemoryStore_Create_NilItem_ReturnsErrNilItem(t *testing.T) {
+	// Arrange
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	// Act
+	created, err := store.Create(ctx, nil)
+
+	// Assert
+	if err == nil {
+		t.Fatal("Create(nil) expected error, got nil")
+	}
+	if !errors.Is(err, ErrNilItem) {
+		t.Errorf("Create(nil) error = %v, want errors.Is ErrNilItem", err)
+	}
+	if created != nil {
+		t.Error("Create(nil) should return nil item")
+	}
+}
+
+func TestMemoryStore_Update_NilItem_ReturnsErrNilItem(t *testing.T) {
+	// Arrange
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	// Create an item first so the ID exists
+	original := &model.Item{Name: "Test", Price: 10}
+	created, err := store.Create(ctx, original)
+	if err != nil {
+		t.Fatalf("Create() failed: %v", err)
+	}
+
+	// Act
+	updated, err := store.Update(ctx, created.ID, nil)
+
+	// Assert
+	if err == nil {
+		t.Fatal("Update(nil) expected error, got nil")
+	}
+	if !errors.Is(err, ErrNilItem) {
+		t.Errorf("Update(nil) error = %v, want errors.Is ErrNilItem", err)
+	}
+	if updated != nil {
+		t.Error("Update(nil) should return nil item")
+	}
 }

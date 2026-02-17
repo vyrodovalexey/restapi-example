@@ -435,3 +435,81 @@ func TestAuth_HandlerNotCalledOn401(t *testing.T) {
 		t.Error("inner handler should NOT be called when auth fails")
 	}
 }
+
+func TestAuth_HealthcheckDoesNotBypassAuth(t *testing.T) {
+	t.Parallel()
+
+	// Arrange - /healthcheck is NOT a public path (only /health is)
+	failAuth := &testAuthenticator{
+		err:    auth.ErrUnauthenticated,
+		method: auth.AuthMethodBasic,
+	}
+	logger := zap.NewNop()
+
+	authMiddleware := middleware.Auth(failAuth, logger)
+	handler := authMiddleware(successHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/healthcheck", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	handler.ServeHTTP(rr, req)
+
+	// Assert - /healthcheck should NOT bypass auth
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d for /healthcheck (not a public path)",
+			rr.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuth_HealthLiveSubpathBypassesAuth(t *testing.T) {
+	t.Parallel()
+
+	// Arrange - /health/live is a sub-path of /health and should bypass auth
+	failAuth := &testAuthenticator{
+		err:    auth.ErrUnauthenticated,
+		method: auth.AuthMethodBasic,
+	}
+	logger := zap.NewNop()
+
+	authMiddleware := middleware.Auth(failAuth, logger)
+	handler := authMiddleware(successHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/health/live", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	handler.ServeHTTP(rr, req)
+
+	// Assert - /health/live should bypass auth
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d for /health/live (sub-path of public path)",
+			rr.Code, http.StatusOK)
+	}
+}
+
+func TestAuth_HealthXXXDoesNotBypassAuth(t *testing.T) {
+	t.Parallel()
+
+	// Arrange - /healthXXX shares prefix but is NOT a sub-path
+	failAuth := &testAuthenticator{
+		err:    auth.ErrUnauthenticated,
+		method: auth.AuthMethodBasic,
+	}
+	logger := zap.NewNop()
+
+	authMiddleware := middleware.Auth(failAuth, logger)
+	handler := authMiddleware(successHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/healthXXX", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	handler.ServeHTTP(rr, req)
+
+	// Assert - /healthXXX should NOT bypass auth
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d for /healthXXX (not a public path)",
+			rr.Code, http.StatusUnauthorized)
+	}
+}

@@ -1,6 +1,6 @@
 # restapi-example
 
-A production-ready REST API and WebSocket server built with Go. This project demonstrates best practices for building scalable, maintainable, and observable HTTP services with comprehensive authentication and security features.
+A production-ready REST API and WebSocket server built with Go. This project demonstrates best practices for building scalable, maintainable, and observable HTTP services with comprehensive authentication, security features, and enterprise-grade deployment capabilities.
 
 ## Features
 
@@ -15,27 +15,57 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - **CORS Support** - Configurable Cross-Origin Resource Sharing
 - **Request Tracing** - Automatic request ID generation and propagation
 - **Docker Ready** - Multi-stage Dockerfile with security best practices
+- **Kubernetes Ready** - Comprehensive Helm chart with production features
 - **In-Memory Storage** - Thread-safe storage implementation (easily replaceable)
 - **Comprehensive Testing** - Unit, functional, integration, E2E, and performance tests
+- **CI/CD Pipeline** - GitHub Actions with security scanning and automated releases
+
+## Table of Contents
+
+- [Project Structure](#project-structure)
+- [Quick Start](#quick-start)
+- [Authentication](#authentication)
+- [Configuration](#configuration)
+- [API Endpoints](#api-endpoints)
+- [Kubernetes Deployment](#kubernetes-deployment)
+- [Testing](#testing)
+- [Performance](#performance)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Development](#development)
+- [Architecture](#architecture)
+- [Docker](#docker)
 
 ## Project Structure
 
 ```
 .
+├── .github/
+│   └── workflows/
+│       └── ci.yml           # GitHub Actions CI/CD pipeline
 ├── cmd/
-│   └── server/          # Application entry point
+│   └── server/              # Application entry point
+├── helm/
+│   └── restapi-example/     # Kubernetes Helm chart
+│       ├── templates/       # K8s resource templates
+│       ├── values.yaml      # Default configuration values
+│       └── README.md        # Helm chart documentation
 ├── internal/
-│   ├── auth/            # Authentication interfaces and implementations
-│   ├── config/          # Configuration management
-│   ├── handler/         # HTTP and WebSocket handlers
-│   ├── middleware/      # HTTP middleware (auth, logging, metrics, CORS, etc.)
-│   ├── model/           # Data models and validation
-│   ├── server/          # HTTP server setup
-│   └── store/           # Data storage interface and implementations
+│   ├── auth/                # Authentication interfaces and implementations
+│   ├── config/              # Configuration management
+│   ├── handler/             # HTTP and WebSocket handlers
+│   ├── middleware/          # HTTP middleware (auth, logging, metrics, CORS, etc.)
+│   ├── model/               # Data models and validation
+│   ├── server/              # HTTP server setup
+│   └── store/               # Data storage interface and implementations
 ├── test/
-│   └── functional/      # Functional/integration tests
-├── Dockerfile           # Multi-stage Docker build
-├── Makefile             # Build automation
+│   ├── cases/               # Test case definitions (JSON)
+│   ├── docker-compose/      # Docker Compose test environment
+│   ├── e2e/                 # End-to-end tests
+│   ├── functional/          # Functional tests (REST API + WebSocket + Auth)
+│   ├── integration/         # Integration tests (requires external services)
+│   └── performance/         # Performance benchmarks
+├── Dockerfile               # Multi-stage Docker build
+├── Makefile                 # Build automation
 └── README.md
 ```
 
@@ -46,6 +76,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - Go 1.25.7 or later
 - Docker (optional, for containerized deployment)
 - Docker Compose (optional, for test environment)
+- Kubernetes + Helm (optional, for K8s deployment)
 
 ### Running Locally
 
@@ -67,6 +98,16 @@ make docker-build
 
 # Run container
 make docker-run
+```
+
+### Running on Kubernetes
+
+```bash
+# Install with Helm
+helm install my-api ./helm/restapi-example
+
+# Or with custom values
+helm install my-api ./helm/restapi-example -f my-values.yaml
 ```
 
 ## Authentication
@@ -472,11 +513,146 @@ All error responses follow a consistent format:
 
 ---
 
-## Test Environment
+## Kubernetes Deployment
+
+The project includes a comprehensive Helm chart for Kubernetes deployment with production-ready features.
+
+### Helm Chart Features
+
+- **Deployment** - Configurable replicas with rolling updates
+- **Service** - ClusterIP/NodePort/LoadBalancer support
+- **Ingress** - HTTP/HTTPS routing with TLS termination
+- **ConfigMap** - Application configuration management
+- **Secret** - Secure credential storage
+- **HPA** - Horizontal Pod Autoscaler for automatic scaling
+- **PDB** - Pod Disruption Budget for high availability
+- **ServiceMonitor** - Prometheus metrics scraping
+- **All Authentication Modes** - Support for none, mTLS, OIDC, Basic, API Key, Multi
+- **TLS/mTLS Configuration** - Secure communication setup
+- **Vault Integration** - Dynamic certificate management
+
+### Quick Deployment
+
+```bash
+# Basic deployment
+helm install my-api ./helm/restapi-example
+
+# Production deployment with scaling
+helm install my-api ./helm/restapi-example \
+  --set replicaCount=3 \
+  --set autoscaling.enabled=true \
+  --set autoscaling.maxReplicas=10 \
+  --set podDisruptionBudget.enabled=true
+```
+
+### Configuration Examples
+
+#### API Key Authentication
+```yaml
+# values.yaml
+config:
+  auth:
+    mode: apikey
+  apiKey:
+    keys: "prod-key-001:frontend,prod-key-002:mobile"
+```
+
+#### TLS with mTLS Authentication
+```yaml
+# values.yaml
+config:
+  tls:
+    enabled: true
+    existingSecret: my-tls-secret
+    clientAuth: require
+  auth:
+    mode: mtls
+```
+
+#### OIDC with Keycloak
+```yaml
+# values.yaml
+config:
+  auth:
+    mode: oidc
+  oidc:
+    issuerURL: "https://keycloak.example.com/realms/production"
+    clientID: "restapi-server"
+    audience: "restapi-audience"
+```
+
+#### Production Setup with Monitoring
+```yaml
+# values.yaml
+replicaCount: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+  requests:
+    cpu: 200m
+    memory: 256Mi
+```
+
+For detailed Helm chart documentation, see [helm/restapi-example/README.md](helm/restapi-example/README.md).
+
+---
+
+## Testing
+
+The project includes comprehensive testing at multiple levels with dedicated test environments.
+
+### Test Structure
+
+- **`test/functional/`** - Functional tests (REST API + WebSocket + Auth)
+- **`test/integration/`** - Integration tests (requires external services)
+- **`test/e2e/`** - End-to-end tests
+- **`test/performance/`** - Performance benchmarks
+- **`test/cases/`** - Test case definitions (JSON)
+- **`test/docker-compose/`** - Docker Compose test environment
+
+### Running Tests
+
+```bash
+# Unit tests
+make test
+
+# Functional tests (API + WebSocket + Auth)
+make test-functional
+
+# Integration tests (requires external services)
+make test-integration
+
+# End-to-end tests
+make test-e2e
+
+# Performance benchmarks
+make test-performance
+
+# All tests with coverage
+make test-all-coverage
+```
+
+### Test Environment
 
 The project includes a comprehensive test environment using Docker Compose with Vault (PKI) and Keycloak (OIDC) for testing authentication features.
 
-### Starting the Test Environment
+#### Starting the Test Environment
 
 ```bash
 # Start all services (Vault, Keycloak, PostgreSQL, REST API server)
@@ -495,16 +671,115 @@ The test environment provides:
 - **PostgreSQL** - Keycloak database
 - **REST API Server** (https://localhost:8080) - Application under test
 
-### Running Tests
+#### Test Coverage
 
 ```bash
-make test              # Unit tests
-make test-functional   # Functional tests
-make test-integration  # Integration tests (requires docker-compose)
-make test-e2e          # E2E tests (requires docker-compose)
-make test-performance  # Performance benchmarks
-make test-all          # All tests (unit + functional)
+# Run tests with coverage report
+make test-coverage
+
+# Check coverage threshold (70%)
+make test-coverage-check
 ```
+
+---
+
+## Performance
+
+### Benchmark Results
+
+The project includes comprehensive performance benchmarks. Here are sample results from the latest run:
+
+| Benchmark | Operations | ns/op | B/op | allocs/op |
+|-----------|------------|-------|------|-----------|
+| BenchmarkHealthEndpoint-10 | 62,427 | 20,964 | 9,709 | 118 |
+| BenchmarkCRUDCreate-10 | 66,046 | 17,970 | 13,390 | 160 |
+| BenchmarkCRUDRead-10 | 62,896 | 16,053 | 10,768 | 126 |
+| BenchmarkConcurrentRequests/concurrency_1-10 | 77,272 | 16,675 | 10,164 | 122 |
+| BenchmarkConcurrentRequests/concurrency_5-10 | 117,372 | 11,293 | 10,172 | 122 |
+| BenchmarkConcurrentRequests/concurrency_10-10 | 119,530 | 10,878 | 10,197 | 122 |
+| BenchmarkConcurrentRequests/concurrency_25-10 | 106,312 | 11,254 | 10,155 | 121 |
+
+### Running Performance Tests
+
+```bash
+# Run all benchmarks
+make test-performance
+
+# Run specific benchmarks with memory profiling
+go test -bench=BenchmarkHealthEndpoint -benchmem -cpuprofile=cpu.prof -memprofile=mem.prof ./test/performance/
+
+# Analyze profiles
+go tool pprof cpu.prof
+go tool pprof mem.prof
+```
+
+### Performance Characteristics
+
+- **Health endpoint**: ~62K ops/sec with minimal memory allocation
+- **CRUD operations**: ~60-66K ops/sec with reasonable memory usage
+- **Concurrent performance**: Scales well up to 10 concurrent connections
+- **Memory efficiency**: Low allocation rates across all operations
+
+---
+
+## CI/CD Pipeline
+
+The project uses GitHub Actions for comprehensive CI/CD with security scanning and automated releases.
+
+### Pipeline Stages
+
+#### Parallel Stage 1: Code Quality & Testing
+- **Lint** - golangci-lint with comprehensive rules
+- **Vulnerability Check** - govulncheck for security scanning
+- **Unit Tests** - Fast unit tests with coverage
+- **Functional Tests** - API and WebSocket functionality tests
+
+#### Parallel Stage 2: Integration & E2E
+- **Integration Tests** - Tests with Vault + Keycloak + PostgreSQL services
+- **E2E Tests** - End-to-end testing with real server instance
+
+#### Sequential Stage 3: Analysis & Build
+- **SonarCloud Analysis** - Code quality and security analysis
+- **Build** - Binary compilation and artifact upload
+- **Docker Build** - Multi-platform container images (PR validation)
+
+#### Release Stage (Tags only)
+- **Build & Release** - Multi-platform binaries with GitHub releases
+- **Docker Build & Push** - Multi-platform images to GitHub Container Registry
+- **SBOM Generation** - Software Bill of Materials for security
+- **Trivy Security Scan** - Container vulnerability scanning
+
+### Pipeline Features
+
+- **Parallel Execution** - Optimized for speed with parallel jobs
+- **Comprehensive Coverage** - Unit, functional, integration, and E2E tests
+- **Security First** - Vulnerability scanning, SBOM generation, container scanning
+- **Multi-platform** - Builds for linux/amd64, linux/arm64, darwin/arm64
+- **Artifact Management** - Binaries, coverage reports, security scans
+- **Release Automation** - Automated GitHub releases with checksums
+
+### Triggering the Pipeline
+
+```bash
+# Trigger on pull request (runs all tests + build validation)
+git push origin feature-branch
+
+# Trigger release (runs full pipeline + docker push + security scan)
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+### Pipeline Configuration
+
+The pipeline is configured in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) with:
+
+- **Go Version**: 1.25.7
+- **golangci-lint**: v2.8.0
+- **Coverage Upload**: Codecov integration
+- **Container Registry**: GitHub Container Registry (ghcr.io)
+- **Security Scanning**: Trivy, govulncheck, SonarCloud
+
+---
 
 ## Development
 
@@ -517,8 +792,8 @@ make run               # Build and run the server
 make test              # Run unit tests
 make test-coverage     # Run tests with coverage report
 make test-functional   # Run functional tests
-make test-integration  # Run integration tests (requires docker-compose)
-make test-e2e          # Run end-to-end tests (requires docker-compose)
+make test-integration  # Run integration tests (requires docker compose)
+make test-e2e          # Run end-to-end tests (requires docker compose)
 make test-performance  # Run performance/benchmark tests
 make test-all          # Run all tests (unit + functional)
 make test-env-up       # Start test environment
@@ -624,6 +899,12 @@ docker run -p 8080:8080 \
 ### Health Check
 
 The Docker image includes a built-in health check that queries `/health` every 30 seconds.
+
+### Multi-platform Support
+
+The CI/CD pipeline builds multi-platform images:
+- `linux/amd64` - Standard x86_64 architecture
+- `linux/arm64` - ARM64 architecture (Apple Silicon, AWS Graviton)
 
 ---
 

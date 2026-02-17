@@ -1,3 +1,6 @@
+// websocket.go implements the WebSocket handler that upgrades HTTP connections
+// and streams random values to connected clients at regular intervals.
+
 package handler
 
 import (
@@ -30,6 +33,7 @@ type WebSocketHandler struct {
 	logger   *zap.Logger
 	mu       sync.RWMutex
 	clients  map[*websocket.Conn]context.CancelFunc
+	wg       sync.WaitGroup // tracks active writePump goroutines
 }
 
 // NewWebSocketHandler creates a new WebSocketHandler instance.
@@ -73,7 +77,11 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 
 	h.logger.Info("websocket client connected", zap.String("remote_addr", conn.RemoteAddr().String()))
 
-	go h.writePump(ctx, conn)
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.writePump(ctx, conn)
+	}()
 	go h.readPump(ctx, conn, cancel)
 }
 
@@ -194,22 +202,20 @@ func (h *WebSocketHandler) removeClient(conn *websocket.Conn) {
 }
 
 // CloseAllConnections closes all active WebSocket connections.
+// It cancels all client contexts to trigger writePump goroutines to send
+// close messages, waits for them to finish via sync.WaitGroup, then
+// forcibly closes the underlying connections.
 func (h *WebSocketHandler) CloseAllConnections() {
 	h.mu.Lock()
-	// Copy the clients map to avoid holding the lock while closing
-	clients := make(map[*websocket.Conn]context.CancelFunc, len(h.clients))
-	for conn, cancel := range h.clients {
-		clients[conn] = cancel
+	// Cancel all contexts first — this triggers writePump goroutines to
+	// send close messages and then exit.
+	for _, cancel := range h.clients {
+		cancel()
 	}
 	h.mu.Unlock()
 
-	// Cancel all contexts first - this will trigger writePump to send close messages
-	for _, cancel := range clients {
-		cancel()
-	}
-
-	// Give writePump goroutines time to send close messages
-	time.Sleep(100 * time.Millisecond)
+	// Wait for all writePump goroutines to finish sending close messages.
+	h.wg.Wait()
 
 	// Now close all connections
 	h.mu.Lock()

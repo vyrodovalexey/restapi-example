@@ -271,3 +271,45 @@ func TestBasicAuthenticator_Method(t *testing.T) {
 		)
 	}
 }
+
+func TestBasicAuthenticator_TimingFix_SameErrorMessage(t *testing.T) {
+	t.Parallel()
+
+	// Arrange - Both "unknown user" and "wrong password" should return
+	// the same error message to prevent user enumeration.
+	password := "correctpassword"
+	hash := generateBcryptHash(t, password)
+	config := "testuser:" + hash
+
+	authenticator, err := auth.NewBasicAuthenticator(config)
+	if err != nil {
+		t.Fatalf("NewBasicAuthenticator() error = %v", err)
+	}
+
+	// Act - unknown user
+	reqUnknown := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqUnknown.SetBasicAuth("unknownuser", password)
+	_, errUnknown := authenticator.Authenticate(reqUnknown)
+
+	// Act - wrong password
+	reqWrong := httptest.NewRequest(http.MethodGet, "/", nil)
+	reqWrong.SetBasicAuth("testuser", "wrongpassword")
+	_, errWrong := authenticator.Authenticate(reqWrong)
+
+	// Assert - both should return ErrInvalidCredentials with same message
+	if errUnknown == nil || errWrong == nil {
+		t.Fatal("both should return errors")
+	}
+	if !errors.Is(errUnknown, auth.ErrInvalidCredentials) {
+		t.Errorf("unknown user error = %v, want ErrInvalidCredentials", errUnknown)
+	}
+	if !errors.Is(errWrong, auth.ErrInvalidCredentials) {
+		t.Errorf("wrong password error = %v, want ErrInvalidCredentials", errWrong)
+	}
+	if errUnknown.Error() != errWrong.Error() {
+		t.Errorf(
+			"error messages differ: unknown=%q, wrong=%q (should be same to prevent enumeration)",
+			errUnknown.Error(), errWrong.Error(),
+		)
+	}
+}

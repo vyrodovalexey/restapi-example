@@ -1,3 +1,6 @@
+// rest.go implements the RESTful HTTP handlers for CRUD operations on items,
+// including health and readiness checks.
+
 package handler
 
 import (
@@ -14,6 +17,9 @@ import (
 
 // Version is the application version.
 const Version = "1.0.0"
+
+// maxRequestBodySize is the maximum allowed size for request bodies (1 MB).
+const maxRequestBodySize = 1 << 20
 
 // RESTHandler handles REST API requests for items.
 type RESTHandler struct {
@@ -90,6 +96,8 @@ func (h *RESTHandler) GetItem(w http.ResponseWriter, r *http.Request) {
 func (h *RESTHandler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+
 	var input model.Item
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		h.logger.Warn("invalid request body", zap.Error(err))
@@ -117,6 +125,8 @@ func (h *RESTHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	vars := mux.Vars(r)
 	id := vars["id"]
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
 
 	var input model.Item
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {

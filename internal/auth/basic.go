@@ -11,7 +11,8 @@ import (
 // BasicAuthenticator authenticates requests using HTTP Basic authentication
 // with bcrypt-hashed passwords.
 type BasicAuthenticator struct {
-	users map[string]string // username -> bcrypt hash
+	users     map[string]string // username -> bcrypt hash
+	dummyHash []byte            // pre-computed hash used when user is not found to prevent timing leaks
 }
 
 // NewBasicAuthenticator creates a new Basic authenticator from a
@@ -65,12 +66,23 @@ func NewBasicAuthenticator(
 		)
 	}
 
-	return &BasicAuthenticator{users: users}, nil
+	// Generate a dummy bcrypt hash at init time. This hash is compared against
+	// when the requested user does not exist, ensuring constant-time behavior
+	// regardless of whether the user is known.
+	dummyHash, err := bcrypt.GenerateFromPassword(
+		[]byte("dummy-password-for-timing-safety"), bcrypt.DefaultCost,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("basic auth: generating dummy hash: %w", err)
+	}
+
+	return &BasicAuthenticator{users: users, dummyHash: dummyHash}, nil
 }
 
 // Authenticate extracts Basic auth credentials from the request,
 // looks up the user, and verifies the password against the stored
-// bcrypt hash.
+// bcrypt hash. When the user is not found, a comparison against a
+// dummy hash is performed to prevent timing-based user enumeration.
 func (a *BasicAuthenticator) Authenticate(
 	r *http.Request,
 ) (*AuthInfo, error) {
@@ -81,14 +93,17 @@ func (a *BasicAuthenticator) Authenticate(
 
 	hash, exists := a.users[username]
 	if !exists {
-		return nil, fmt.Errorf("%w: unknown user", ErrInvalidCredentials)
+		// Compare against dummy hash to consume the same time as a real
+		// comparison, preventing timing-based user enumeration.
+		_ = bcrypt.CompareHashAndPassword(a.dummyHash, []byte(password))
+		return nil, fmt.Errorf("%w: invalid username or password", ErrInvalidCredentials)
 	}
 
 	if err := bcrypt.CompareHashAndPassword(
 		[]byte(hash), []byte(password),
 	); err != nil {
 		return nil, fmt.Errorf(
-			"%w: wrong password", ErrInvalidCredentials,
+			"%w: invalid username or password", ErrInvalidCredentials,
 		)
 	}
 

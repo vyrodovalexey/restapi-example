@@ -181,11 +181,25 @@ type itemResponse struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// newBenchHTTPClient returns an *http.Client configured with
+// connection pooling suitable for high-concurrency benchmarks.
+func newBenchHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: DefaultTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        200,
+			MaxIdleConnsPerHost: 200,
+			MaxConnsPerHost:     200,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
+
 // BenchmarkHealthEndpoint measures the baseline latency of the
 // health check endpoint.
 func BenchmarkHealthEndpoint(b *testing.B) {
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -216,7 +230,7 @@ func BenchmarkAPIKeyAuth(b *testing.B) {
 	}
 
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -255,7 +269,7 @@ func BenchmarkBasicAuth(b *testing.B) {
 	}
 
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 
 	b.ResetTimer()
 	for b.Loop() {
@@ -285,7 +299,7 @@ func BenchmarkBasicAuth(b *testing.B) {
 // BenchmarkCRUDCreate measures the latency of creating an item.
 func BenchmarkCRUDCreate(b *testing.B) {
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 	headers := buildBenchAuthHeaders()
 
 	var counter atomic.Int64
@@ -328,7 +342,7 @@ func BenchmarkCRUDCreate(b *testing.B) {
 // BenchmarkCRUDRead measures the latency of reading an item.
 func BenchmarkCRUDRead(b *testing.B) {
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 	headers := buildBenchAuthHeaders()
 
 	// Create an item to read.
@@ -399,7 +413,7 @@ func BenchmarkCRUDRead(b *testing.B) {
 // load by running multiple goroutines making requests simultaneously.
 func BenchmarkConcurrentRequests(b *testing.B) {
 	baseURL := getOrStartServer(b)
-	client := &http.Client{Timeout: DefaultTimeout}
+	client := newBenchHTTPClient()
 	headers := buildBenchAuthHeaders()
 
 	concurrencyLevels := []int{1, 5, 10, 25}

@@ -30,10 +30,12 @@ type Server struct {
 	logger        *zap.Logger
 	wsHandler     *handler.WebSocketHandler
 	authenticator auth.Authenticator
+	initErr       error // deferred error from initialization (e.g. TLS config)
 }
 
 // New creates a new Server instance.
 // The authenticator parameter is optional; pass nil for no authentication.
+// If TLS configuration fails, the error is deferred and returned by Start().
 func New(
 	cfg *config.Config,
 	logger *zap.Logger,
@@ -51,7 +53,7 @@ func New(
 
 	s.setupMiddleware()
 	s.setupRoutes(itemStore)
-	s.setupHTTPServer()
+	s.initErr = s.setupHTTPServer()
 
 	return s
 }
@@ -111,8 +113,9 @@ func (s *Server) setupRoutes(itemStore store.Store) {
 	}
 }
 
-// setupHTTPServer configures the HTTP server.
-func (s *Server) setupHTTPServer() {
+// setupHTTPServer configures the HTTP server. It returns an error if TLS
+// configuration is enabled but cannot be built.
+func (s *Server) setupHTTPServer() error {
 	s.httpServer = &http.Server{
 		Addr:              s.config.Address(),
 		Handler:           s.router,
@@ -126,10 +129,12 @@ func (s *Server) setupHTTPServer() {
 	if s.config.TLSEnabled {
 		tlsConfig, err := s.buildTLSConfig()
 		if err != nil {
-			s.logger.Fatal("failed to build TLS config", zap.Error(err))
+			return fmt.Errorf("building TLS config: %w", err)
 		}
 		s.httpServer.TLSConfig = tlsConfig
 	}
+
+	return nil
 }
 
 // buildTLSConfig creates a TLS configuration from the server config.
@@ -161,15 +166,22 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 			return nil, fmt.Errorf("reading TLS CA cert: %w", err)
 		}
 		caPool := x509.NewCertPool()
-		caPool.AppendCertsFromPEM(caCert)
+		if !caPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("parsing TLS CA cert: no valid certificates found in %s", s.config.TLSCAPath)
+		}
 		tlsConfig.ClientCAs = caPool
 	}
 
 	return tlsConfig, nil
 }
 
-// Start starts the HTTP server.
+// Start starts the HTTP server. It returns any deferred initialization error
+// (e.g. TLS configuration failure) before attempting to listen.
 func (s *Server) Start() error {
+	if s.initErr != nil {
+		return fmt.Errorf("server initialization: %w", s.initErr)
+	}
+
 	if s.config.TLSEnabled {
 		s.logger.Info("starting server with TLS",
 			zap.String("address", s.config.Address()),

@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "restapi-example.fullname" . }}
+  labels:
+    {{- include "restapi-example.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.config.tls.enabled }}
+    - port: {{ .Values.service.tlsPort | default 8443 }}
+      targetPort: https
+      protocol: TCP
+      name: https
+    {{- end }}
+  selector:
+    {{- include "restapi-example.selectorLabels" . | nindent 4 }}

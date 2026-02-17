@@ -69,7 +69,8 @@ func NewAPIKeyAuthenticator(
 
 // Authenticate extracts the API key from the X-API-Key header and
 // validates it against the configured keys using constant-time
-// comparison to prevent timing attacks.
+// comparison. All keys are always compared to prevent timing-based
+// information leakage about which keys exist.
 func (a *APIKeyAuthenticator) Authenticate(
 	r *http.Request,
 ) (*AuthInfo, error) {
@@ -78,18 +79,26 @@ func (a *APIKeyAuthenticator) Authenticate(
 		return nil, ErrUnauthenticated
 	}
 
+	var matchedName string
+	found := false
+
 	for key, name := range a.keys {
 		if subtle.ConstantTimeCompare(
 			[]byte(apiKey), []byte(key),
 		) == 1 {
-			return &AuthInfo{
-				Method:  AuthMethodAPIKey,
-				Subject: name,
-			}, nil
+			matchedName = name
+			found = true
 		}
 	}
 
-	return nil, ErrInvalidAPIKey
+	if !found {
+		return nil, ErrInvalidAPIKey
+	}
+
+	return &AuthInfo{
+		Method:  AuthMethodAPIKey,
+		Subject: matchedName,
+	}, nil
 }
 
 // Method returns the authentication method type.
