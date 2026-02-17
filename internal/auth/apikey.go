@@ -8,7 +8,7 @@ import (
 )
 
 // APIKeyHeader is the HTTP header name for API key authentication.
-const APIKeyHeader = "X-API-Key"
+const APIKeyHeader = "X-API-Key" //nolint:gosec // header name, not a credential
 
 // APIKeyAuthenticator authenticates requests using API keys provided
 // in the X-API-Key header with constant-time comparison.

@@ -1,5 +1,4 @@
-Here's the corrected config:
-yamlversion: "2"
+version: "2"
 
 run:
   timeout: 5m
@@ -20,7 +19,6 @@ linters:
     - nilerr
     - errorlint
     - makezero
-    - exportloopref
     # Security
     - gosec
     - bidichk

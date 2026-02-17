@@ -59,7 +59,7 @@ func (a *OIDCAuthenticator) Authenticate(
 
 	claims, err := a.verifier.Verify(r.Context(), token)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidToken, err)
 	}
 
 	if a.audience != "" && !containsAudience(claims.Audience, a.audience) {

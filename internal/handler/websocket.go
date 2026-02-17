@@ -53,6 +53,8 @@ func (h *WebSocketHandler) RegisterRoutes(router *mux.Router) {
 }
 
 // HandleWebSocket handles WebSocket connection requests.
+//
+//nolint:contextcheck // intentional: WebSocket connections outlive the HTTP request context
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -61,7 +63,7 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Use background context instead of request context because the HTTP request
-	// context gets cancelled when the handler returns, but WebSocket connections
+	// context gets canceled when the handler returns, but WebSocket connections
 	// need to persist beyond the initial HTTP upgrade.
 	ctx, cancel := context.WithCancel(context.Background())
 
