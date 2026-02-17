@@ -478,12 +478,13 @@ func TestWebSocketHandler_SendPing(t *testing.T) {
 	// Give time for connection to be registered
 	time.Sleep(100 * time.Millisecond)
 
-	// Act - Get the underlying connection from the handler's clients map
-	// and call sendPing directly
+	// Act - Get the underlying connection and its state from the handler's clients map
 	wsHandler.mu.RLock()
 	var serverConn *websocket.Conn
-	for c := range wsHandler.clients {
+	var serverState *connState
+	for c, s := range wsHandler.clients {
 		serverConn = c
+		serverState = s
 		break
 	}
 	wsHandler.mu.RUnlock()
@@ -500,7 +501,7 @@ func TestWebSocketHandler_SendPing(t *testing.T) {
 	})
 
 	// Send ping from server
-	err = wsHandler.sendPing(serverConn)
+	err = wsHandler.sendPing(serverConn, serverState)
 	if err != nil {
 		t.Fatalf("sendPing() error = %v", err)
 	}
@@ -545,11 +546,13 @@ func TestWebSocketHandler_SendRandomValue(t *testing.T) {
 	// Give time for connection to be registered
 	time.Sleep(100 * time.Millisecond)
 
-	// Get the server-side connection
+	// Get the server-side connection and its state
 	wsHandler.mu.RLock()
 	var serverConn *websocket.Conn
-	for c := range wsHandler.clients {
+	var serverState *connState
+	for c, s := range wsHandler.clients {
 		serverConn = c
+		serverState = s
 		break
 	}
 	wsHandler.mu.RUnlock()
@@ -559,7 +562,7 @@ func TestWebSocketHandler_SendRandomValue(t *testing.T) {
 	}
 
 	// Act - Call sendRandomValue directly
-	err = wsHandler.sendRandomValue(serverConn)
+	err = wsHandler.sendRandomValue(serverConn, serverState)
 	if err != nil {
 		t.Fatalf("sendRandomValue() error = %v", err)
 	}
