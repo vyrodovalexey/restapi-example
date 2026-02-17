@@ -21,7 +21,7 @@ env:
   HELM_VERSION: 'v3.17.3'
   HELM_CHART_PATH: 'helm/restapi-example'
   HELM_RELEASE_NAME: 'restapi-example'
-  HELM_NAMESPACE: 'restapi-example'
+  HELM_NAMESPACE: 'restapi-example-test'
 
 jobs:
   # ===========================================================================
@@ -455,6 +455,10 @@ jobs:
           cluster_name: helm-test
           wait: 120s
 
+      - name: Create test namespace
+        run: |
+          kubectl create namespace ${{ env.HELM_NAMESPACE }} 
+
       - name: Helm Lint
         run: helm lint ${{ env.HELM_CHART_PATH }}
 
@@ -465,6 +469,7 @@ jobs:
         run: |
           echo "==> Running Helm dry-run install..."
           helm install --dry-run --debug test-release ${{ env.HELM_CHART_PATH }} \
+            --namespace  ${{ env.HELM_NAMESPACE }} \
             --set image.tag=pr-${{ github.event.pull_request.number }} \
             --set image.pullPolicy=Never
 
@@ -707,13 +712,13 @@ jobs:
 
       - name: Create test namespace
         run: |
-          kubectl create namespace restapi-example-test
+          kubectl create namespace ${{ env.HELM_NAMESPACE }} 
 
       - name: Helm install
         run: |
           echo "==> Installing Helm chart..."
-          helm install restapi-example helm \
-            --namespace restapi-example-test \
+          helm install ${{ env.HELM_RELEASE_NAME }} ${{ env.HELM_CHART_PATH}} \
+            --namespace  ${{ env.HELM_NAMESPACE }} \
             --set image.repository=restapi-example \
             --set image.tag=helm-test \
             --set image.pullPolicy=Never \
