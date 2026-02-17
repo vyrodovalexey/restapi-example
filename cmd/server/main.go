@@ -42,6 +42,7 @@ func run() int {
 
 	logger.Info("configuration loaded",
 		zap.Int("server_port", cfg.ServerPort),
+		zap.Int("probe_port", cfg.ProbePort),
 		zap.String("log_level", cfg.LogLevel),
 		zap.Duration("shutdown_timeout", cfg.ShutdownTimeout),
 		zap.Bool("metrics_enabled", cfg.MetricsEnabled),
@@ -152,9 +153,15 @@ func createAuthenticator(
 			zap.String("issuer_url", cfg.OIDCIssuerURL),
 			zap.String("client_id", cfg.OIDCClientID),
 		)
-		return nil, fmt.Errorf(
-			"OIDC authenticator requires token verifier setup",
-		)
+		verifier, err := auth.NewOIDCTokenVerifier(cfg.OIDCIssuerURL)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"creating OIDC token verifier: %w", err,
+			)
+		}
+		return auth.NewOIDCAuthenticator(
+			verifier, cfg.OIDCAudience,
+		), nil
 	case "multi":
 		logger.Info("authentication mode: multi")
 		return createMultiAuthenticator(cfg, logger)
@@ -198,6 +205,21 @@ func createMultiAuthenticator(
 		}
 		authenticators = append(authenticators, ak)
 		logger.Info("multi-auth: API key auth enabled")
+	}
+
+	if cfg.OIDCIssuerURL != "" && cfg.OIDCClientID != "" {
+		verifier, err := auth.NewOIDCTokenVerifier(cfg.OIDCIssuerURL)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"creating OIDC token verifier for multi-auth: %w",
+				err,
+			)
+		}
+		authenticators = append(
+			authenticators,
+			auth.NewOIDCAuthenticator(verifier, cfg.OIDCAudience),
+		)
+		logger.Info("multi-auth: OIDC enabled")
 	}
 
 	if len(authenticators) == 0 {

@@ -1401,3 +1401,334 @@ func TestAuthCRUDWithAPIKey(t *testing.T) {
 
 	t.Log("Auth CRUD workflow completed successfully")
 }
+
+// testOIDCAudience is the expected audience for OIDC tests.
+const testOIDCAudience = "test-audience"
+
+// testOIDCIssuer is the expected issuer for OIDC tests.
+const testOIDCIssuer = "http://mock-issuer"
+
+// TestAuthMultiAuthWithAPIKey tests multi-auth mode with API key.
+// FT-AUTH-008
+func TestAuthMultiAuthWithAPIKey(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-008", "Multi-auth with API key")
+	defer LogTestEnd(t, "FT-AUTH-008")
+
+	usersConfig := generateTestBasicAuthConfig(t)
+	ts := NewTestServerWithMultiAuth(t, testAPIKeyConfig, usersConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Test that API key works in multi-auth mode
+	t.Log("Testing API key access in multi-auth mode")
+	headers := APIKeyHeaders(testAPIKey)
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	AssertSuccess(t, apiResp)
+
+	// Test that no auth returns 401
+	t.Log("Testing no auth returns 401 in multi-auth mode")
+	noAuthResp, err := client.Get(ctx, "/api/v1/items", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, noAuthResp, http.StatusUnauthorized)
+}
+
+// TestAuthMultiAuthWithBasicAuth tests multi-auth mode with basic auth.
+// FT-AUTH-009
+func TestAuthMultiAuthWithBasicAuth(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-009", "Multi-auth with basic auth")
+	defer LogTestEnd(t, "FT-AUTH-009")
+
+	usersConfig := generateTestBasicAuthConfig(t)
+	ts := NewTestServerWithMultiAuth(t, testAPIKeyConfig, usersConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	basicClient := NewBasicAuthClient(
+		t, ts.BaseURL, testBasicUser, testBasicPassword,
+	)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Test that basic auth works in multi-auth mode
+	t.Log("Testing basic auth access in multi-auth mode")
+	resp, err := basicClient.DoWithBasicAuth(ctx, Request{
+		Method: http.MethodGet,
+		Path:   "/api/v1/items",
+	})
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	AssertSuccess(t, apiResp)
+}
+
+// TestAuthOIDCWithValidToken tests OIDC auth with a valid mock token.
+// FT-AUTH-010
+func TestAuthOIDCWithValidToken(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-010", "OIDC auth with valid token")
+	defer LogTestEnd(t, "FT-AUTH-010")
+
+	ts := NewTestServerWithOIDCAuth(t, testOIDCAudience)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Create a valid mock token
+	token := CreateMockToken(
+		"test-user",
+		testOIDCIssuer,
+		[]string{testOIDCAudience},
+		time.Now().Add(1*time.Hour),
+	)
+
+	// Test that Bearer token auth works
+	t.Log("Testing OIDC auth with valid token")
+	headers := BearerTokenHeaders(token)
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	AssertSuccess(t, apiResp)
+}
+
+// TestAuthOIDCWithInvalidToken tests OIDC auth with an invalid token.
+// FT-AUTH-011
+func TestAuthOIDCWithInvalidToken(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-011", "OIDC auth with invalid token")
+	defer LogTestEnd(t, "FT-AUTH-011")
+
+	ts := NewTestServerWithOIDCAuth(t, testOIDCAudience)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Test that invalid token returns 401
+	t.Log("Testing OIDC auth with invalid token")
+	headers := BearerTokenHeaders("not-a-valid-token")
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, resp, http.StatusUnauthorized)
+}
+
+// TestAuthOIDCWithExpiredToken tests OIDC auth with an expired token.
+// FT-AUTH-012
+func TestAuthOIDCWithExpiredToken(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-012", "OIDC auth with expired token")
+	defer LogTestEnd(t, "FT-AUTH-012")
+
+	ts := NewTestServerWithOIDCAuth(t, testOIDCAudience)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Create an expired mock token
+	token := CreateMockToken(
+		"test-user",
+		testOIDCIssuer,
+		[]string{testOIDCAudience},
+		time.Now().Add(-1*time.Hour),
+	)
+
+	// Test that expired token returns 401
+	t.Log("Testing OIDC auth with expired token")
+	headers := BearerTokenHeaders(token)
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	AssertStatusCode(t, resp, http.StatusUnauthorized)
+}
+
+// TestAuthMultiAuthCRUDWorkflow tests full CRUD with multi-auth.
+// FT-AUTH-013
+func TestAuthMultiAuthCRUDWorkflow(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-013", "Multi-auth CRUD workflow")
+	defer LogTestEnd(t, "FT-AUTH-013")
+
+	usersConfig := generateTestBasicAuthConfig(t)
+	ts := NewTestServerWithMultiAuth(t, testAPIKeyConfig, usersConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout*2,
+	)
+	defer cancel()
+
+	headers := APIKeyHeaders(testAPIKey)
+
+	// Step 1: Create
+	t.Log("Step 1: Create item with API key in multi-auth mode")
+	createReq := CreateItemRequest{
+		Name:        "Multi-Auth CRUD Item",
+		Description: "Item for multi-auth CRUD test",
+		Price:       39.99,
+	}
+
+	createResp, err := client.Post(
+		ctx, "/api/v1/items", createReq, headers,
+	)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	AssertStatusCode(t, createResp, http.StatusCreated)
+
+	createAPIResp, err := ParseAPIResponse(createResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse create response: %v", err)
+	}
+	AssertSuccess(t, createAPIResp)
+
+	createdItem, err := ParseItem(createAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse created item: %v", err)
+	}
+
+	itemID := createdItem.ID
+	t.Logf("Created item with ID: %s", itemID)
+
+	// Step 2: Read
+	t.Log("Step 2: Read item with API key")
+	readResp, err := client.Get(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	AssertStatusCode(t, readResp, http.StatusOK)
+
+	readAPIResp, err := ParseAPIResponse(readResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse read response: %v", err)
+	}
+	AssertSuccess(t, readAPIResp)
+
+	readItem, err := ParseItem(readAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse read item: %v", err)
+	}
+	if readItem.Name != createReq.Name {
+		t.Errorf(
+			"Read item name mismatch: expected %q, got %q",
+			createReq.Name, readItem.Name,
+		)
+	}
+
+	// Step 3: Update
+	t.Log("Step 3: Update item with API key")
+	updateReq := UpdateItemRequest{
+		Name:        "Updated Multi-Auth Item",
+		Description: "Updated description",
+		Price:       49.99,
+	}
+
+	updateResp, err := client.Put(
+		ctx, "/api/v1/items/"+itemID, updateReq, headers,
+	)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	AssertStatusCode(t, updateResp, http.StatusOK)
+
+	// Step 4: Verify update
+	t.Log("Step 4: Verify update")
+	verifyResp, err := client.Get(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Verify update failed: %v", err)
+	}
+	AssertStatusCode(t, verifyResp, http.StatusOK)
+
+	verifyAPIResp, err := ParseAPIResponse(verifyResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse verify response: %v", err)
+	}
+
+	verifyItem, err := ParseItem(verifyAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse verify item: %v", err)
+	}
+	if verifyItem.Name != updateReq.Name {
+		t.Errorf(
+			"Updated item name mismatch: expected %q, got %q",
+			updateReq.Name, verifyItem.Name,
+		)
+	}
+	if verifyItem.Price != updateReq.Price {
+		t.Errorf(
+			"Updated item price mismatch: expected %f, got %f",
+			updateReq.Price, verifyItem.Price,
+		)
+	}
+
+	// Step 5: Delete
+	t.Log("Step 5: Delete item with API key")
+	deleteResp, err := client.Delete(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	AssertStatusCode(t, deleteResp, http.StatusNoContent)
+
+	// Step 6: Verify deletion
+	t.Log("Step 6: Verify deletion")
+	verifyDeleteResp, err := client.Get(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Verify delete failed: %v", err)
+	}
+	AssertStatusCode(t, verifyDeleteResp, http.StatusNotFound)
+
+	t.Log("Multi-auth CRUD workflow completed successfully")
+}

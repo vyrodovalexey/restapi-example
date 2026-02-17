@@ -19,6 +19,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/config"
 	"github.com/vyrodovalexey/restapi-example/internal/server"
 	"github.com/vyrodovalexey/restapi-example/internal/store"
@@ -83,6 +84,7 @@ func startLocalServer(b *testing.B) testServerInfo {
 
 	cfg := &config.Config{
 		ServerPort:      port,
+		ProbePort:       0, // Disable probe server in benchmarks
 		LogLevel:        "error",
 		ShutdownTimeout: 5 * time.Second,
 		MetricsEnabled:  true,
@@ -403,6 +405,209 @@ func BenchmarkCRUDRead(b *testing.B) {
 				b.Fatalf(
 					"Read: expected 200, got %d",
 					readResp.StatusCode,
+				)
+			}
+		}
+	})
+}
+
+// startLocalServerWithAuth starts an in-process HTTP server with the
+// specified authentication configuration and returns its base URL and
+// a cleanup function.
+func startLocalServerWithAuth(
+	b *testing.B,
+	authMode, apiKeys, basicUsers string,
+) testServerInfo {
+	b.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		b.Fatalf("Failed to find available port: %v", err)
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+
+	cfg := &config.Config{
+		ServerPort:      port,
+		ProbePort:       0, // Disable probe server in benchmarks
+		LogLevel:        "error",
+		ShutdownTimeout: 5 * time.Second,
+		MetricsEnabled:  true,
+		AuthMode:        authMode,
+		APIKeys:         apiKeys,
+		BasicAuthUsers:  basicUsers,
+		TLSClientAuth:   "none",
+	}
+
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	var authenticator auth.Authenticator
+
+	switch authMode {
+	case "apikey":
+		authenticator, err = auth.NewAPIKeyAuthenticator(apiKeys)
+		if err != nil {
+			b.Fatalf("Failed to create API key authenticator: %v", err)
+		}
+	case "basic":
+		authenticator, err = auth.NewBasicAuthenticator(basicUsers)
+		if err != nil {
+			b.Fatalf(
+				"Failed to create basic authenticator: %v", err,
+			)
+		}
+	case "multi":
+		var authenticators []auth.Authenticator
+		if apiKeys != "" {
+			apiKeyAuth, apiErr := auth.NewAPIKeyAuthenticator(
+				apiKeys,
+			)
+			if apiErr != nil {
+				b.Fatalf(
+					"Failed to create API key authenticator: %v",
+					apiErr,
+				)
+			}
+			authenticators = append(authenticators, apiKeyAuth)
+		}
+		if basicUsers != "" {
+			basicAuth, basicErr := auth.NewBasicAuthenticator(
+				basicUsers,
+			)
+			if basicErr != nil {
+				b.Fatalf(
+					"Failed to create basic authenticator: %v",
+					basicErr,
+				)
+			}
+			authenticators = append(authenticators, basicAuth)
+		}
+		authenticator = auth.NewMultiAuthenticator(authenticators...)
+	}
+
+	srv := server.New(cfg, logger, itemStore, authenticator)
+
+	go func() {
+		if srvErr := srv.Start(); srvErr != nil &&
+			srvErr != http.ErrServerClosed {
+			b.Logf("Server error: %v", srvErr)
+		}
+	}()
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+
+	waitCtx, waitCancel := context.WithTimeout(
+		context.Background(), 10*time.Second,
+	)
+	defer waitCancel()
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			b.Fatalf("Server did not become ready within timeout")
+		case <-ticker.C:
+			resp, reqErr := http.Get(baseURL + "/health")
+			if reqErr == nil {
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					goto ready
+				}
+			}
+		}
+	}
+
+ready:
+	cleanup := func() {
+		shutCtx, shutCancel := context.WithTimeout(
+			context.Background(), 5*time.Second,
+		)
+		defer shutCancel()
+		_ = srv.Shutdown(shutCtx)
+	}
+
+	return testServerInfo{
+		baseURL: baseURL,
+		cleanup: cleanup,
+	}
+}
+
+// BenchmarkMultiAuth measures the overhead of multi-method
+// authentication (apikey + basic) on a simple GET request.
+func BenchmarkMultiAuth(b *testing.B) {
+	apiKeys := "bench-multi-key-12345:bench-multi"
+	bcryptHash := "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+	basicUsers := "benchuser:" + bcryptHash
+
+	info := startLocalServerWithAuth(
+		b, "multi", apiKeys, basicUsers,
+	)
+	defer info.cleanup()
+
+	client := newBenchHTTPClient()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			req, _ := http.NewRequest(
+				http.MethodGet,
+				info.baseURL+"/api/v1/items",
+				nil,
+			)
+			req.Header.Set("X-API-Key", "bench-multi-key-12345")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				b.Fatalf("Multi-auth request failed: %v", err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				b.Fatalf(
+					"Multi-auth: expected 200, got %d",
+					resp.StatusCode,
+				)
+			}
+		}
+	})
+}
+
+// BenchmarkAPIKeyAuthLocal measures the overhead of API key
+// authentication using a local in-process server.
+func BenchmarkAPIKeyAuthLocal(b *testing.B) {
+	apiKeys := "bench-apikey-12345:bench-key"
+
+	info := startLocalServerWithAuth(b, "apikey", apiKeys, "")
+	defer info.cleanup()
+
+	client := newBenchHTTPClient()
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			req, _ := http.NewRequest(
+				http.MethodGet,
+				info.baseURL+"/api/v1/items",
+				nil,
+			)
+			req.Header.Set("X-API-Key", "bench-apikey-12345")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				b.Fatalf("API key local request failed: %v", err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				b.Fatalf(
+					"API key local: expected 200, got %d",
+					resp.StatusCode,
 				)
 			}
 		}

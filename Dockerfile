@@ -76,13 +76,14 @@ RUN chown -R appuser:appgroup /app
 # Switch to non-root user
 USER appuser
 
-# Expose ports (HTTP and HTTPS/TLS)
+# Expose ports (HTTP, HTTPS/TLS, and probe)
 EXPOSE 8080
 EXPOSE 8443
+EXPOSE 9090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Health check - uses dedicated probe port (always HTTP)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost:9090/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/server"]

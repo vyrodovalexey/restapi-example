@@ -25,7 +25,9 @@ import (
 // Server represents the HTTP server.
 type Server struct {
 	httpServer    *http.Server
+	probeServer   *http.Server
 	router        *mux.Router
+	probeRouter   *mux.Router
 	config        *config.Config
 	logger        *zap.Logger
 	wsHandler     *handler.WebSocketHandler
@@ -53,6 +55,8 @@ func New(
 
 	s.setupMiddleware()
 	s.setupRoutes(itemStore)
+	s.setupProbeRoutes(itemStore)
+	s.setupProbeServer()
 	s.initErr = s.setupHTTPServer()
 
 	return s
@@ -110,6 +114,41 @@ func (s *Server) setupRoutes(itemStore store.Store) {
 	// Metrics endpoint
 	if s.config.MetricsEnabled {
 		s.router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	}
+}
+
+// setupProbeRoutes configures the probe server routes.
+// The probe server serves health, readiness, and metrics endpoints
+// on a dedicated HTTP port without any authentication middleware.
+func (s *Server) setupProbeRoutes(itemStore store.Store) {
+	s.probeRouter = mux.NewRouter()
+
+	// Health and readiness endpoints (reuse handlers from REST handler)
+	restHandler := handler.NewRESTHandler(itemStore, s.logger)
+	s.probeRouter.HandleFunc("/health", restHandler.HealthCheck).Methods(http.MethodGet)
+	s.probeRouter.HandleFunc("/ready", restHandler.ReadyCheck).Methods(http.MethodGet)
+
+	// Metrics endpoint
+	if s.config.MetricsEnabled {
+		s.probeRouter.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	}
+}
+
+// setupProbeServer configures the dedicated probe HTTP server.
+// The probe server is always plain HTTP, regardless of TLS settings.
+func (s *Server) setupProbeServer() {
+	if s.config.ProbePort == 0 {
+		return
+	}
+
+	s.probeServer = &http.Server{
+		Addr:              s.config.ProbeAddress(),
+		Handler:           s.probeRouter,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 2 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 }
 
@@ -182,6 +221,18 @@ func (s *Server) Start() error {
 		return fmt.Errorf("server initialization: %w", s.initErr)
 	}
 
+	// Start probe server if configured
+	if s.probeServer != nil {
+		go func() {
+			s.logger.Info("starting probe server",
+				zap.String("address", s.config.ProbeAddress()),
+			)
+			if err := s.probeServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.logger.Error("probe server error", zap.Error(err))
+			}
+		}()
+	}
+
 	if s.config.TLSEnabled {
 		s.logger.Info("starting server with TLS",
 			zap.String("address", s.config.Address()),
@@ -220,6 +271,14 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 
+	// Shutdown probe server
+	if s.probeServer != nil {
+		if err := s.probeServer.Shutdown(ctx); err != nil {
+			return fmt.Errorf("probe server shutdown: %w", err)
+		}
+		s.logger.Info("probe server shutdown complete")
+	}
+
 	s.logger.Info("server shutdown complete")
 	return nil
 }
@@ -227,4 +286,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // Router returns the server's router for testing purposes.
 func (s *Server) Router() *mux.Router {
 	return s.router
+}
+
+// ProbeRouter returns the probe server's router for testing purposes.
+func (s *Server) ProbeRouter() *mux.Router {
+	return s.probeRouter
 }

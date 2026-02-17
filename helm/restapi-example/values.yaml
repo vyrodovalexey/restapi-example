@@ -63,6 +63,8 @@ service:
   port: 8080
   # -- HTTPS/TLS service port (when TLS is enabled)
   tlsPort: 8443
+  # -- Probe port (health, ready, metrics - always HTTP)
+  probePort: 9090
   # -- Annotations for the service
   annotations: {}
 
@@ -101,7 +103,7 @@ resources:
 livenessProbe:
   httpGet:
     path: /health
-    port: http
+    port: probe
   initialDelaySeconds: 5
   periodSeconds: 10
   timeoutSeconds: 5
@@ -112,7 +114,7 @@ livenessProbe:
 readinessProbe:
   httpGet:
     path: /ready
-    port: http
+    port: probe
   initialDelaySeconds: 5
   periodSeconds: 5
   timeoutSeconds: 3
@@ -124,7 +126,7 @@ startupProbe:
   enabled: false
   httpGet:
     path: /health
-    port: http
+    port: probe
   initialDelaySeconds: 0
   periodSeconds: 5
   timeoutSeconds: 3
@@ -176,6 +178,8 @@ volumeMounts: []
 config:
   # -- Server port (internal container port)
   serverPort: 8080
+  # -- Probe port (health, ready, metrics - always HTTP)
+  probePort: 9090
   # -- Log level (debug, info, warn, error)
   logLevel: "info"
   # -- Graceful shutdown timeout

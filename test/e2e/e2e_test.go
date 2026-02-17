@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -321,7 +322,9 @@ func TestE2E_UnauthorizedAccessDenied(t *testing.T) {
 	for _, ep := range protectedEndpoints {
 		name := fmt.Sprintf("%s_%s", ep.method, ep.path)
 		t.Run(name, func(t *testing.T) {
-			var bodyReader *bytes.Reader
+			var bodyReader io.Reader
+			var reqHeaders map[string]string
+
 			if ep.method == http.MethodPost ||
 				ep.method == http.MethodPut {
 				payload, _ := json.Marshal(map[string]any{
@@ -329,23 +332,14 @@ func TestE2E_UnauthorizedAccessDenied(t *testing.T) {
 					"price": 1.0,
 				})
 				bodyReader = bytes.NewReader(payload)
-			}
-
-			var reqHeaders map[string]string
-			if bodyReader != nil {
 				reqHeaders = map[string]string{
 					"Content-Type": "application/json",
 				}
 			}
 
-			var bodyIO *bytes.Reader
-			if bodyReader != nil {
-				bodyIO = bodyReader
-			}
-
 			status, body := doRequest(
 				t, client, ep.method,
-				base+ep.path, bodyIO, reqHeaders,
+				base+ep.path, bodyReader, reqHeaders,
 			)
 
 			if status != http.StatusUnauthorized {
@@ -453,6 +447,292 @@ func TestE2E_ConcurrentRequests(t *testing.T) {
 		"Concurrent requests test passed: %d/%d succeeded",
 		successCount, numConcurrent,
 	)
+}
+
+// TestE2E_MTLSWorkflow tests the complete mTLS authentication
+// workflow: create TLS client with Vault PKI certs → perform CRUD
+// operations → verify all succeed.
+func TestE2E_MTLSWorkflow(t *testing.T) {
+	caCert := os.Getenv(EnvCACertPath)
+	clientCert := os.Getenv(EnvClientCert)
+	clientKey := os.Getenv(EnvClientKey)
+
+	if caCert == "" || clientCert == "" || clientKey == "" {
+		t.Skip("mTLS cert paths not set, skipping mTLS workflow")
+	}
+
+	skipIfServerUnavailableTLS(t, caCert, clientCert, clientKey)
+
+	base := e2eServerURL()
+	client, err := createTLSClient(caCert, clientCert, clientKey)
+	if err != nil {
+		t.Fatalf("Failed to create TLS client: %v", err)
+	}
+
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+
+	// Step 1: Create item via mTLS.
+	t.Log("Step 1: Create item via mTLS")
+	createPayload, _ := json.Marshal(createItemRequest{
+		Name:        "mTLS Workflow Item",
+		Description: "Created during mTLS E2E test",
+		Price:       55.50,
+	})
+
+	status, body := doRequest(
+		t, client, http.MethodPost,
+		base+"/api/v1/items",
+		bytes.NewReader(createPayload), headers,
+	)
+
+	if status != http.StatusCreated {
+		t.Fatalf("mTLS Create: expected 201, got %d. Body: %s",
+			status, body)
+	}
+
+	var createResp apiResponse
+	if err := json.Unmarshal(body, &createResp); err != nil {
+		t.Fatalf("Failed to parse create response: %v", err)
+	}
+
+	var created itemResponse
+	if err := json.Unmarshal(createResp.Data, &created); err != nil {
+		t.Fatalf("Failed to parse created item: %v", err)
+	}
+
+	if created.ID == "" {
+		t.Fatal("Created item has empty ID")
+	}
+	t.Logf("Created item ID=%s via mTLS", created.ID)
+
+	itemURL := fmt.Sprintf(
+		"%s/api/v1/items/%s", base, created.ID,
+	)
+
+	// Step 2: Read item via mTLS.
+	t.Log("Step 2: Read item via mTLS")
+	status, body = doRequest(
+		t, client, http.MethodGet, itemURL, nil, headers,
+	)
+
+	if status != http.StatusOK {
+		t.Fatalf("mTLS Read: expected 200, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 3: Update item via mTLS.
+	t.Log("Step 3: Update item via mTLS")
+	updatePayload, _ := json.Marshal(updateItemRequest{
+		Name:        "mTLS Updated Item",
+		Description: "Updated during mTLS E2E test",
+		Price:       77.77,
+	})
+
+	status, body = doRequest(
+		t, client, http.MethodPut, itemURL,
+		bytes.NewReader(updatePayload), headers,
+	)
+
+	if status != http.StatusOK {
+		t.Fatalf("mTLS Update: expected 200, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 4: Verify update via mTLS.
+	t.Log("Step 4: Verify update via mTLS")
+	status, body = doRequest(
+		t, client, http.MethodGet, itemURL, nil, headers,
+	)
+
+	if status != http.StatusOK {
+		t.Fatalf("mTLS Verify: expected 200, got %d", status)
+	}
+
+	var verifyResp apiResponse
+	if err := json.Unmarshal(body, &verifyResp); err != nil {
+		t.Fatalf("Failed to parse verify response: %v", err)
+	}
+
+	var verifyItem itemResponse
+	if err := json.Unmarshal(verifyResp.Data, &verifyItem); err != nil {
+		t.Fatalf("Failed to parse verify item: %v", err)
+	}
+
+	if verifyItem.Name != "mTLS Updated Item" {
+		t.Errorf(
+			"Verify: expected 'mTLS Updated Item', got %q",
+			verifyItem.Name,
+		)
+	}
+
+	// Step 5: Delete item via mTLS.
+	t.Log("Step 5: Delete item via mTLS")
+	status, body = doRequest(
+		t, client, http.MethodDelete, itemURL, nil, headers,
+	)
+
+	if status != http.StatusNoContent {
+		t.Fatalf("mTLS Delete: expected 204, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 6: Verify deletion via mTLS.
+	t.Log("Step 6: Verify deletion via mTLS")
+	status, _ = doRequest(
+		t, client, http.MethodGet, itemURL, nil, headers,
+	)
+
+	if status != http.StatusNotFound {
+		t.Errorf("mTLS Verify delete: expected 404, got %d", status)
+	}
+
+	t.Log("mTLS workflow completed successfully")
+}
+
+// TestE2E_OIDCWorkflow tests the complete OIDC authentication
+// workflow: obtain token from Keycloak → perform CRUD operations
+// with Bearer token → verify all succeed.
+func TestE2E_OIDCWorkflow(t *testing.T) {
+	keycloakURL := getEnvOrDefault(
+		EnvKeycloakURL, DefaultKeycloakURL,
+	)
+
+	realm := os.Getenv(EnvOIDCRealm)
+	clientID := os.Getenv(EnvOIDCClientID)
+	clientSecret := os.Getenv(EnvOIDCClientSecret)
+	username := os.Getenv(EnvOIDCUsername)
+	password := os.Getenv(EnvOIDCPassword)
+
+	if realm == "" || clientID == "" || clientSecret == "" {
+		t.Skip("OIDC config not set, skipping OIDC workflow")
+	}
+	if username == "" || password == "" {
+		t.Skip("OIDC user credentials not set, skipping")
+	}
+
+	// Check Keycloak availability.
+	kcClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := kcClient.Get(keycloakURL)
+	if err != nil {
+		t.Skipf("Keycloak unavailable at %s: %v", keycloakURL, err)
+	}
+	resp.Body.Close()
+
+	skipIfServerUnavailable(t)
+
+	// Obtain token from Keycloak.
+	t.Log("Step 1: Obtain OIDC token from Keycloak")
+	token, err := getKeycloakToken(
+		keycloakURL, realm, clientID, clientSecret,
+		username, password,
+	)
+	if err != nil {
+		t.Fatalf("Failed to obtain Keycloak token: %v", err)
+	}
+
+	if token == "" {
+		t.Fatal("Received empty token from Keycloak")
+	}
+	t.Log("Successfully obtained OIDC token")
+
+	base := e2eServerURL()
+	client := newHTTPClient()
+	headers := map[string]string{
+		"Authorization": "Bearer " + token,
+		"Content-Type":  "application/json",
+	}
+
+	// Step 2: Create item with OIDC token.
+	t.Log("Step 2: Create item with OIDC token")
+	createPayload, _ := json.Marshal(createItemRequest{
+		Name:        "OIDC Workflow Item",
+		Description: "Created during OIDC E2E test",
+		Price:       33.33,
+	})
+
+	status, body := doRequest(
+		t, client, http.MethodPost,
+		base+"/api/v1/items",
+		bytes.NewReader(createPayload), headers,
+	)
+
+	if status != http.StatusCreated {
+		t.Fatalf("OIDC Create: expected 201, got %d. Body: %s",
+			status, body)
+	}
+
+	var createResp apiResponse
+	if err := json.Unmarshal(body, &createResp); err != nil {
+		t.Fatalf("Failed to parse create response: %v", err)
+	}
+
+	var created itemResponse
+	if err := json.Unmarshal(createResp.Data, &created); err != nil {
+		t.Fatalf("Failed to parse created item: %v", err)
+	}
+
+	if created.ID == "" {
+		t.Fatal("Created item has empty ID")
+	}
+	t.Logf("Created item ID=%s with OIDC token", created.ID)
+
+	itemURL := fmt.Sprintf(
+		"%s/api/v1/items/%s", base, created.ID,
+	)
+
+	// Step 3: Read item with OIDC token.
+	t.Log("Step 3: Read item with OIDC token")
+	status, body = doRequest(
+		t, client, http.MethodGet, itemURL, nil, headers,
+	)
+
+	if status != http.StatusOK {
+		t.Fatalf("OIDC Read: expected 200, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 4: Update item with OIDC token.
+	t.Log("Step 4: Update item with OIDC token")
+	updatePayload, _ := json.Marshal(updateItemRequest{
+		Name:        "OIDC Updated Item",
+		Description: "Updated during OIDC E2E test",
+		Price:       66.66,
+	})
+
+	status, body = doRequest(
+		t, client, http.MethodPut, itemURL,
+		bytes.NewReader(updatePayload), headers,
+	)
+
+	if status != http.StatusOK {
+		t.Fatalf("OIDC Update: expected 200, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 5: Delete item with OIDC token.
+	t.Log("Step 5: Delete item with OIDC token")
+	status, body = doRequest(
+		t, client, http.MethodDelete, itemURL, nil, headers,
+	)
+
+	if status != http.StatusNoContent {
+		t.Fatalf("OIDC Delete: expected 204, got %d. Body: %s",
+			status, body)
+	}
+
+	// Step 6: Verify deletion.
+	t.Log("Step 6: Verify deletion")
+	status, _ = doRequest(
+		t, client, http.MethodGet, itemURL, nil, headers,
+	)
+
+	if status != http.StatusNotFound {
+		t.Errorf("OIDC Verify delete: expected 404, got %d", status)
+	}
+
+	t.Log("OIDC workflow completed successfully")
 }
 
 // TestE2E_GracefulDegradation verifies that the server handles

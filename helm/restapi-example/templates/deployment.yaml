@@ -47,6 +47,9 @@ spec:
             - name: http
               containerPort: {{ include "restapi-example.containerPort" . }}
               protocol: TCP
+            - name: probe
+              containerPort: {{ include "restapi-example.probePort" . }}
+              protocol: TCP
             {{- if .Values.config.tls.enabled }}
             - name: https
               containerPort: {{ .Values.service.tlsPort | default 8443 }}

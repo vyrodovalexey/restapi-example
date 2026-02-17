@@ -19,6 +19,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - **In-Memory Storage** - Thread-safe storage implementation (easily replaceable)
 - **Comprehensive Testing** - Unit, functional, integration, E2E, and performance tests
 - **CI/CD Pipeline** - GitHub Actions with security scanning and automated releases
+- **Dedicated Probe Port** - Separate HTTP server for health checks, readiness, and metrics
 
 ## Table of Contents
 
@@ -88,7 +89,7 @@ make run
 go run ./cmd/server
 ```
 
-The server will start on `http://localhost:8080` by default.
+The server will start on `http://localhost:8080` by default. A dedicated probe server will also start on port `9090` for health checks, readiness probes, and metrics.
 
 ### Running with Docker
 
@@ -152,16 +153,22 @@ APP_AUTH_MODE=oidc \
   APP_OIDC_CLIENT_ID=restapi-server ./server
 curl -H "Authorization: Bearer <jwt_token>" http://localhost:8080/api/v1/items
 ```
-Requires valid JWT tokens from the configured OIDC provider.
+Requires valid JWT tokens from the configured OIDC provider. Features:
+- JWT token verification using OIDC discovery
+- Supports RS256/RS384/RS512 signing algorithms
+- JWKS caching with automatic refresh
+- No external dependencies (stdlib only)
 
 #### Multi-Mode Authentication
 ```bash
 APP_AUTH_MODE=multi \
   APP_API_KEYS="key1:app1" \
   APP_BASIC_AUTH_USERS="admin:$2y$10$..." \
+  APP_OIDC_ISSUER_URL=http://localhost:8090/realms/restapi-test \
+  APP_OIDC_CLIENT_ID=restapi-server \
   APP_TLS_ENABLED=true ./server
 ```
-Accepts any of the configured authentication methods.
+Accepts any of the configured authentication methods (mTLS, Basic Auth, API Key, OIDC).
 
 ## Configuration
 
@@ -192,6 +199,7 @@ Configuration is managed through environment variables. Environment variables ta
 | `APP_VAULT_TOKEN` | `` | Vault token |
 | `APP_VAULT_PKI_PATH` | `` | Vault PKI path |
 | `APP_VAULT_PKI_ROLE` | `` | Vault PKI role |
+| `APP_PROBE_PORT` | `9090` | Dedicated probe server port (0 = disabled) |
 
 ### Example
 
@@ -208,6 +216,8 @@ The API provides both public and protected endpoints:
 
 - **Public endpoints** (no authentication required): `/health`, `/ready`, `/metrics`
 - **Protected endpoints** (authentication required): `/api/v1/items/*`, `/ws`
+
+**Note:** Health, readiness, and metrics endpoints are also available on the dedicated probe port (9090 by default) without authentication or TLS, making them ideal for Docker health checks and Kubernetes probes.
 
 ### Health Check
 
@@ -530,6 +540,7 @@ The project includes a comprehensive Helm chart for Kubernetes deployment with p
 - **All Authentication Modes** - Support for none, mTLS, OIDC, Basic, API Key, Multi
 - **TLS/mTLS Configuration** - Secure communication setup
 - **Vault Integration** - Dynamic certificate management
+- **Probe Port Configuration** - Dedicated port for health checks and metrics
 
 ### Quick Deployment
 
@@ -607,6 +618,12 @@ resources:
   requests:
     cpu: 200m
     memory: 256Mi
+
+config:
+  probePort: 9090  # Dedicated probe server port
+
+service:
+  probePort: 9090  # Expose probe port for health checks
 ```
 
 For detailed Helm chart documentation, see [helm/restapi-example/README.md](helm/restapi-example/README.md).
@@ -619,10 +636,10 @@ The project includes comprehensive testing at multiple levels with dedicated tes
 
 ### Test Structure
 
-- **`test/functional/`** - Functional tests (REST API + WebSocket + Auth)
-- **`test/integration/`** - Integration tests (requires external services)
-- **`test/e2e/`** - End-to-end tests
-- **`test/performance/`** - Performance benchmarks
+- **`test/functional/`** - Functional tests (REST API + WebSocket + Auth) - 13 test cases including multi-auth and OIDC
+- **`test/integration/`** - Integration tests (requires external services) - includes OIDC password grant and multi-auth methods
+- **`test/e2e/`** - End-to-end tests - includes mTLS and OIDC workflows with Keycloak
+- **`test/performance/`** - Performance benchmarks - includes multi-auth and API key auth benchmarks
 - **`test/cases/`** - Test case definitions (JSON)
 - **`test/docker-compose/`** - Docker Compose test environment
 
@@ -667,7 +684,7 @@ make test-env-logs
 
 The test environment provides:
 - **Vault** (http://localhost:8200) - PKI certificate management
-- **Keycloak** (http://localhost:8090) - OIDC identity provider
+- **Keycloak** (http://localhost:8090) - OIDC identity provider with realm `restapi-test`, client `restapi-server`, and test users (`test-user`, `admin-user`)
 - **PostgreSQL** - Keycloak database
 - **REST API Server** (https://localhost:8080) - Application under test
 
@@ -735,7 +752,7 @@ The project uses GitHub Actions for comprehensive CI/CD with security scanning a
 - **Functional Tests** - API and WebSocket functionality tests
 
 #### Parallel Stage 2: Integration & E2E
-- **Integration Tests** - Tests with Vault + Keycloak + PostgreSQL services
+- **Integration Tests** - Tests with Vault + Keycloak + PostgreSQL services, including OIDC integration
 - **E2E Tests** - End-to-end testing with real server instance
 
 #### Sequential Stage 3: Analysis & Build
@@ -754,9 +771,11 @@ The project uses GitHub Actions for comprehensive CI/CD with security scanning a
 - **Parallel Execution** - Optimized for speed with parallel jobs
 - **Comprehensive Coverage** - Unit, functional, integration, and E2E tests
 - **Security First** - Vulnerability scanning, SBOM generation, container scanning
+- **Supply Chain Security** - All GitHub Actions pinned to SHA hashes
 - **Multi-platform** - Builds for linux/amd64, linux/arm64, darwin/arm64
 - **Artifact Management** - Binaries, coverage reports, security scans
 - **Release Automation** - Automated GitHub releases with checksums
+- **Helm Validation** - Uses Kind (Kubernetes-in-Docker) cluster for real install testing
 
 ### Triggering the Pipeline
 
@@ -798,6 +817,9 @@ make test-performance  # Run performance/benchmark tests
 make test-all          # Run all tests (unit + functional)
 make test-env-up       # Start test environment
 make test-env-down     # Stop test environment
+make test-env-logs     # View test environment logs
+make test-env-status   # Check test environment status
+make test-env-wait     # Wait for test environment to be ready
 make lint              # Run linter
 make lint-fix          # Run linter with auto-fix
 make fmt               # Format code
@@ -846,12 +868,20 @@ The `internal/auth/` package provides a flexible authentication system:
 - **`apikey.go`** - API key authentication
 - **`basic.go`** - HTTP Basic authentication with bcrypt
 - **`mtls.go`** - Mutual TLS authentication
-- **`oidc.go`** - OpenID Connect JWT validation
+- **`oidc.go`** - OpenID Connect JWT validation (stub interface)
+- **`oidc_verifier.go`** - Full OIDC JWT token verification implementation
 - **`multi.go`** - Multi-mode authentication combiner
+
+### Server Architecture
+
+The application runs two HTTP servers:
+
+1. **Main Server** (port 8080) - Handles API requests with full middleware chain and authentication
+2. **Probe Server** (port 9090) - Dedicated server for health checks, readiness probes, and metrics without authentication or TLS
 
 ### Middleware Chain
 
-Requests flow through the following middleware (in order):
+Main server requests flow through the following middleware (in order):
 
 1. **Recovery** - Catches panics and returns 500 error
 2. **RequestID** - Generates/propagates request IDs
@@ -859,6 +889,8 @@ Requests flow through the following middleware (in order):
 4. **Authentication** - Validates credentials based on auth mode
 5. **Logging** - Logs request details
 6. **CORS** - Handles cross-origin requests
+
+The probe server serves endpoints directly without middleware for optimal performance and reliability.
 
 ### Storage Interface
 
@@ -890,7 +922,7 @@ docker build -t restapi-example:latest .
 ### Run Container
 
 ```bash
-docker run -p 8080:8080 \
+docker run -p 8080:8080 -p 9090:9090 \
   -e APP_LOG_LEVEL=info \
   -e APP_METRICS_ENABLED=true \
   restapi-example:latest
@@ -898,7 +930,7 @@ docker run -p 8080:8080 \
 
 ### Health Check
 
-The Docker image includes a built-in health check that queries `/health` every 30 seconds.
+The Docker image includes a built-in health check that queries the dedicated probe port (`/health` on port 9090) every 30 seconds. The probe port always uses plain HTTP without authentication, making health checks reliable regardless of the main server's TLS or authentication configuration.
 
 ### Multi-platform Support
 

@@ -34,6 +34,9 @@ func TestLoad_DefaultValues(t *testing.T) {
 	if cfg.OTLPEndpoint != "" {
 		t.Errorf("OTLPEndpoint = %s, want empty string", cfg.OTLPEndpoint)
 	}
+	if cfg.ProbePort != DefaultProbePort {
+		t.Errorf("ProbePort = %d, want %d", cfg.ProbePort, DefaultProbePort)
+	}
 }
 
 func TestLoad_EnvironmentVariables(t *testing.T) {
@@ -46,6 +49,7 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 			name: "custom server port",
 			envVars: map[string]string{
 				EnvServerPort: "9090",
+				EnvProbePort:  "9091",
 			},
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.ServerPort != 9090 {
@@ -87,6 +91,17 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 			},
 		},
 		{
+			name: "custom probe port",
+			envVars: map[string]string{
+				EnvProbePort: "9091",
+			},
+			validate: func(t *testing.T, cfg *Config) {
+				if cfg.ProbePort != 9091 {
+					t.Errorf("ProbePort = %d, want 9091", cfg.ProbePort)
+				}
+			},
+		},
+		{
 			name: "custom OTLP endpoint",
 			envVars: map[string]string{
 				EnvOTLPEndpoint: "http://localhost:4317",
@@ -101,6 +116,7 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 			name: "all custom values",
 			envVars: map[string]string{
 				EnvServerPort:      "3000",
+				EnvProbePort:       "9091",
 				EnvLogLevel:        "warn",
 				EnvShutdownTimeout: "45s",
 				EnvMetricsEnabled:  "true",
@@ -109,6 +125,9 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 			validate: func(t *testing.T, cfg *Config) {
 				if cfg.ServerPort != 3000 {
 					t.Errorf("ServerPort = %d, want 3000", cfg.ServerPort)
+				}
+				if cfg.ProbePort != 9091 {
+					t.Errorf("ProbePort = %d, want 9091", cfg.ProbePort)
 				}
 				if cfg.LogLevel != "warn" {
 					t.Errorf("LogLevel = %s, want warn", cfg.LogLevel)
@@ -175,6 +194,27 @@ func TestLoad_ValidationErrors(t *testing.T) {
 			wantErr: ErrInvalidServerPort,
 		},
 		{
+			name: "invalid probe port - negative",
+			envVars: map[string]string{
+				EnvProbePort: "-1",
+			},
+			wantErr: ErrInvalidProbePort,
+		},
+		{
+			name: "invalid probe port - too high",
+			envVars: map[string]string{
+				EnvProbePort: "65536",
+			},
+			wantErr: ErrInvalidProbePort,
+		},
+		{
+			name: "probe port conflicts with server port",
+			envVars: map[string]string{
+				EnvProbePort: "8080",
+			},
+			wantErr: ErrProbePortConflict,
+		},
+		{
 			name: "invalid log level",
 			envVars: map[string]string{
 				EnvLogLevel: "invalid",
@@ -233,6 +273,12 @@ func TestLoad_ParseErrors(t *testing.T) {
 			name: "invalid server port - not a number",
 			envVars: map[string]string{
 				EnvServerPort: "abc",
+			},
+		},
+		{
+			name: "invalid probe port - not a number",
+			envVars: map[string]string{
+				EnvProbePort: "abc",
 			},
 		},
 		{
@@ -304,6 +350,56 @@ func TestConfig_Validate(t *testing.T) {
 				ShutdownTimeout: 1 * time.Second,
 			},
 			wantErr: nil,
+		},
+		{
+			name: "valid config with probe port",
+			config: Config{
+				ServerPort:      8080,
+				ProbePort:       9090,
+				LogLevel:        "info",
+				ShutdownTimeout: 30 * time.Second,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid config with probe port disabled",
+			config: Config{
+				ServerPort:      8080,
+				ProbePort:       0,
+				LogLevel:        "info",
+				ShutdownTimeout: 30 * time.Second,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "invalid probe port - negative",
+			config: Config{
+				ServerPort:      8080,
+				ProbePort:       -1,
+				LogLevel:        "info",
+				ShutdownTimeout: 30 * time.Second,
+			},
+			wantErr: ErrInvalidProbePort,
+		},
+		{
+			name: "invalid probe port - too high",
+			config: Config{
+				ServerPort:      8080,
+				ProbePort:       65536,
+				LogLevel:        "info",
+				ShutdownTimeout: 30 * time.Second,
+			},
+			wantErr: ErrInvalidProbePort,
+		},
+		{
+			name: "probe port conflicts with server port",
+			config: Config{
+				ServerPort:      8080,
+				ProbePort:       8080,
+				LogLevel:        "info",
+				ShutdownTimeout: 30 * time.Second,
+			},
+			wantErr: ErrProbePortConflict,
 		},
 		{
 			name: "invalid port - zero",
@@ -426,6 +522,33 @@ func TestConfig_Address(t *testing.T) {
 	}
 }
 
+func TestConfig_ProbeAddress(t *testing.T) {
+	tests := []struct {
+		name      string
+		probePort int
+		want      string
+	}{
+		{"default probe port", 9090, ":9090"},
+		{"custom probe port", 3001, ":3001"},
+		{"disabled probe port", 0, ":0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := &Config{ProbePort: tt.probePort}
+
+			// Act
+			got := cfg.ProbeAddress()
+
+			// Assert
+			if got != tt.want {
+				t.Errorf("ProbeAddress() = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidLogLevels(t *testing.T) {
 	validLevels := []string{"debug", "info", "warn", "error"}
 
@@ -459,6 +582,9 @@ func TestLoadAuthModeDefaults(t *testing.T) {
 	// Assert
 	if err != nil {
 		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if cfg.ProbePort != DefaultProbePort {
+		t.Errorf("ProbePort = %d, want %d", cfg.ProbePort, DefaultProbePort)
 	}
 	if cfg.AuthMode != DefaultAuthMode {
 		t.Errorf("AuthMode = %s, want %s", cfg.AuthMode, DefaultAuthMode)
@@ -1151,6 +1277,9 @@ func TestBackwardCompatibility(t *testing.T) {
 	}
 
 	// Verify all defaults work without any auth configuration
+	if cfg.ProbePort != DefaultProbePort {
+		t.Errorf("ProbePort = %d, want %d", cfg.ProbePort, DefaultProbePort)
+	}
 	if cfg.AuthMode != "none" {
 		t.Errorf("AuthMode = %s, want none", cfg.AuthMode)
 	}
@@ -1636,6 +1765,7 @@ func clearEnvVars(t *testing.T) {
 	t.Helper()
 	envVars := []string{
 		EnvServerPort,
+		EnvProbePort,
 		EnvLogLevel,
 		EnvShutdownTimeout,
 		EnvMetricsEnabled,

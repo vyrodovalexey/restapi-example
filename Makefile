@@ -142,16 +142,26 @@ test-all: test test-functional ## Run all tests (unit + functional)
 .PHONY: test-env-up
 test-env-up: ## Start test environment (docker compose)
 	@echo "==> Starting test environment..."
-	docker compose -f test/docker-compose/docker-compose.yml up -d
+	docker compose -f test/docker-compose/docker-compose.yml --env-file test/docker-compose/.env.test up -d
+
+.PHONY: test-env-status
+test-env-status: ## Show test environment status
+	@echo "==> Test environment status..."
+	docker compose -f test/docker-compose/docker-compose.yml --env-file test/docker-compose/.env.test ps
+
+.PHONY: test-env-wait
+test-env-wait: ## Wait for test environment to be ready
+	@echo "==> Waiting for test environment..."
+	@./test/docker-compose/scripts/wait-for-services.sh || echo "Warning: wait script not found or failed"
 
 .PHONY: test-env-down
 test-env-down: ## Stop test environment
 	@echo "==> Stopping test environment..."
-	docker compose -f test/docker-compose/docker-compose.yml down -v
+	docker compose -f test/docker-compose/docker-compose.yml --env-file test/docker-compose/.env.test down -v
 
 .PHONY: test-env-logs
 test-env-logs: ## Show test environment logs
-	docker compose -f test/docker-compose/docker-compose.yml logs -f
+	docker compose -f test/docker-compose/docker-compose.yml --env-file test/docker-compose/.env.test logs -f
 
 # ==============================================================================
 # Code quality targets

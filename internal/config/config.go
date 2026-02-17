@@ -17,6 +17,7 @@ const (
 	DefaultMetricsEnabled  = true
 	DefaultAuthMode        = "none"
 	DefaultTLSClientAuth   = "none"
+	DefaultProbePort       = 9090
 )
 
 // Environment variable names.
@@ -42,12 +43,14 @@ const (
 	EnvVaultToken      = "APP_VAULT_TOKEN" //nolint:gosec // env var name, not a credential
 	EnvVaultPKIPath    = "APP_VAULT_PKI_PATH"
 	EnvVaultPKIRole    = "APP_VAULT_PKI_ROLE"
+	EnvProbePort       = "APP_PROBE_PORT"
 )
 
 // Config holds the application configuration.
 type Config struct {
 	// Server settings.
 	ServerPort      int
+	ProbePort       int // Probe server port (0 = disabled).
 	LogLevel        string
 	ShutdownTimeout time.Duration
 	MetricsEnabled  bool
@@ -111,6 +114,12 @@ var (
 	ErrInvalidMultiAuthConfig = errors.New(
 		"at least one auth config must be provided when auth mode is multi",
 	)
+	ErrInvalidProbePort = errors.New(
+		"probe port must be between 0 and 65535",
+	)
+	ErrProbePortConflict = errors.New(
+		"probe port must differ from server port when probe port is not 0",
+	)
 )
 
 // Load reads configuration from environment variables with defaults.
@@ -118,6 +127,7 @@ var (
 func Load() (*Config, error) {
 	cfg := &Config{
 		ServerPort:      DefaultServerPort,
+		ProbePort:       DefaultProbePort,
 		LogLevel:        DefaultLogLevel,
 		ShutdownTimeout: DefaultShutdownTimeout,
 		MetricsEnabled:  DefaultMetricsEnabled,
@@ -158,6 +168,14 @@ func (c *Config) loadServerEnv() error {
 			return fmt.Errorf("parsing %s: %w", EnvServerPort, err)
 		}
 		c.ServerPort = port
+	}
+
+	if val := os.Getenv(EnvProbePort); val != "" {
+		port, err := strconv.Atoi(val)
+		if err != nil {
+			return fmt.Errorf("parsing %s: %w", EnvProbePort, err)
+		}
+		c.ProbePort = port
 	}
 
 	if val := os.Getenv(EnvLogLevel); val != "" {
@@ -314,6 +332,14 @@ func (c *Config) validateServer() error {
 		return ErrInvalidServerPort
 	}
 
+	if c.ProbePort != 0 && (c.ProbePort < 1 || c.ProbePort > 65535) {
+		return ErrInvalidProbePort
+	}
+
+	if c.ProbePort != 0 && c.ProbePort == c.ServerPort {
+		return ErrProbePortConflict
+	}
+
 	validLogLevels := map[string]bool{
 		"debug": true,
 		"info":  true,
@@ -443,4 +469,9 @@ func (c *Config) hasAnyAuthConfig() bool {
 // Address returns the server address in host:port format.
 func (c *Config) Address() string {
 	return fmt.Sprintf(":%d", c.ServerPort)
+}
+
+// ProbeAddress returns the probe server address in host:port format.
+func (c *Config) ProbeAddress() string {
+	return fmt.Sprintf(":%d", c.ProbePort)
 }

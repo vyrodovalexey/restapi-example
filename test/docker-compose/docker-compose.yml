@@ -1,200 +1,130 @@
 # Docker Compose test environment for mTLS and OIDC authentication testing.
-# Provides Vault (PKI), Keycloak (OIDC), PostgreSQL, and the REST API server under test.
+# Provides Vault (PKI), Keycloak (OIDC), PostgreSQL, and init services.
+# The REST API server is run separately for testing.
 
 services:
   # ---------------------------------------------------------------------------
-  # Vault – PKI secrets engine for mTLS certificate management
+  # PostgreSQL – backing store for Keycloak
+  # ---------------------------------------------------------------------------
+  keycloakdb:
+    image: postgres:16
+    container_name: keycloakdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---------------------------------------------------------------------------
+  # Keycloak – OIDC identity provider
+  # ---------------------------------------------------------------------------
+  keycloak_web:
+    image: quay.io/keycloak/keycloak:26.5
+    container_name: keycloak_web
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloakdb:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: password
+
+      KC_HTTP_PORT: 8090
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+      KC_HTTP_ENABLED: true
+      KC_FEATURES: token-exchange,admin-fine-grained-authz
+      KC_SPI_REALM_DEFAULT_SSL_REQUIRED: none
+
+      KC_LOG_LEVEL: info
+      KC_METRICS_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    command: start-dev --import-realm
+    volumes:
+      - ./config/keycloak-realm.json:/opt/keycloak/data/import/restapi-test-realm.json:ro
+    depends_on:
+      keycloakdb:
+        condition: service_healthy
+    ports:
+      - "8090:8090"
+      - "8091:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Vault – PKI secrets engine for mTLS certificates
   # ---------------------------------------------------------------------------
   vault:
     image: hashicorp/vault:1.17
-    container_name: restapi-test-vault
+    container_name: vault
+    volumes:
+      - vault_data:/vault/file
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: ${VAULT_DEV_ROOT_TOKEN_ID:-myroot}
-      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
-      VAULT_ADDR: "http://127.0.0.1:8200"
-      VAULT_LOG_LEVEL: ${VAULT_LOG_LEVEL:-info}
+      VAULT_DEV_ROOT_TOKEN_ID: myroot
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
     cap_add:
       - IPC_LOCK
     ports:
-      - "${VAULT_HOST_PORT:-8200}:8200"
-    volumes:
-      - vault_data:/vault/file
-      - ./config/vault-config.hcl:/vault/config/local.hcl:ro
-      - ./scripts:/scripts:ro
-      - certs:/certs
+      - "8200:8200"
     healthcheck:
       test: ["CMD", "vault", "status"]
       interval: 5s
       timeout: 3s
       retries: 15
       start_period: 5s
-    networks:
-      - restapi-test
-
-  # ---------------------------------------------------------------------------
-  # PostgreSQL – Keycloak backing database
-  # ---------------------------------------------------------------------------
-  keycloakdb:
-    image: postgres:16-alpine
-    container_name: restapi-test-keycloakdb
-    environment:
-      POSTGRES_DB: ${KC_DB_NAME:-keycloak}
-      POSTGRES_USER: ${KC_DB_USER:-keycloak}
-      POSTGRES_PASSWORD: ${KC_DB_PASSWORD:-password}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${KC_DB_USER:-keycloak} -d ${KC_DB_NAME:-keycloak}"]
-      interval: 5s
-      timeout: 3s
-      retries: 15
-      start_period: 5s
-    networks:
-      - restapi-test
-
-  # ---------------------------------------------------------------------------
-  # Keycloak – OIDC identity provider
-  # ---------------------------------------------------------------------------
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.5
-    container_name: restapi-test-keycloak
-    environment:
-      KC_DB: postgres
-      KC_DB_URL: "jdbc:postgresql://keycloakdb:5432/${KC_DB_NAME:-keycloak}"
-      KC_DB_USERNAME: ${KC_DB_USER:-keycloak}
-      KC_DB_PASSWORD: ${KC_DB_PASSWORD:-password}
-      KC_HTTP_PORT: 8090
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
-      KC_HTTP_ENABLED: "true"
-      KC_FEATURES: token-exchange,admin-fine-grained-authz
-      KC_SPI_REALM_DEFAULT_SSL_REQUIRED: none
-      KC_LOG_LEVEL: ${KC_LOG_LEVEL:-info}
-      KC_METRICS_ENABLED: "true"
-      KC_HEALTH_ENABLED: "true"
-      KEYCLOAK_ADMIN: ${KC_ADMIN_USER:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-admin}
-    command: start-dev --import-realm
-    depends_on:
-      keycloakdb:
-        condition: service_healthy
-    ports:
-      - "${KC_HOST_PORT:-8090}:8090"
-      - "${KC_HEALTH_HOST_PORT:-8091}:9000"
-    volumes:
-      - ./config/keycloak-realm.json:/opt/keycloak/data/import/restapi-test-realm.json:ro
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '\"status\": \"UP\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-    networks:
-      - restapi-test
 
   # ---------------------------------------------------------------------------
   # vault-init – Initialise Vault PKI and generate certificates
   # ---------------------------------------------------------------------------
   vault-init:
     image: hashicorp/vault:1.17
-    container_name: restapi-test-vault-init
-    entrypoint: /bin/sh
-    command: ["/scripts/init-vault.sh"]
+    container_name: vault-init
+    volumes:
+      - ./scripts/init-vault.sh:/scripts/init-vault.sh:ro
+      - certs:/certs
     environment:
-      VAULT_ADDR: "http://vault:8200"
-      VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-myroot}
-      VAULT_PKI_PATH: ${VAULT_PKI_PATH:-pki}
-      VAULT_PKI_ROLE: ${VAULT_PKI_ROLE:-restapi-server}
-      CERT_TTL: ${CERT_TTL:-8760h}
-      SERVER_CN: ${SERVER_CN:-restapi-server}
-      CLIENT_CN: ${CLIENT_CN:-restapi-client}
-      SERVER_ALT_NAMES: ${SERVER_ALT_NAMES:-restapi-server,localhost}
-      SERVER_IP_SANS: ${SERVER_IP_SANS:-127.0.0.1}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: myroot
+      CERTS_DIR: /certs
+    entrypoint: ["sh", "/scripts/init-vault.sh"]
     depends_on:
       vault:
         condition: service_healthy
-    volumes:
-      - ./scripts:/scripts:ro
-      - certs:/certs
-    networks:
-      - restapi-test
+    restart: "no"
 
   # ---------------------------------------------------------------------------
-  # keycloak-init – Create realm, client, users and roles
+  # keycloak-init – Verify/create Keycloak realm, client and users
   # ---------------------------------------------------------------------------
   keycloak-init:
     image: hashicorp/vault:1.17
-    container_name: restapi-test-keycloak-init
-    entrypoint: /bin/sh
-    command: ["/scripts/init-keycloak.sh"]
+    container_name: keycloak-init
+    volumes:
+      - ./scripts/init-keycloak.sh:/scripts/init-keycloak.sh:ro
     environment:
-      KEYCLOAK_URL: "http://keycloak:8090"
-      KEYCLOAK_ADMIN: ${KC_ADMIN_USER:-admin}
-      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-admin}
-      REALM_NAME: ${KC_REALM:-restapi-test}
-      CLIENT_ID: ${KC_CLIENT_ID:-restapi-server}
-      CLIENT_SECRET: ${KC_CLIENT_SECRET:-restapi-server-secret}
+      KEYCLOAK_URL: http://keycloak_web:8090
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      REALM_NAME: restapi-test
+      CLIENT_ID: restapi-server
+      CLIENT_SECRET: restapi-server-secret
+    entrypoint: ["sh", "/scripts/init-keycloak.sh"]
     depends_on:
-      keycloak:
+      keycloak_web:
         condition: service_healthy
-    volumes:
-      - ./scripts:/scripts:ro
-    networks:
-      - restapi-test
+    restart: "no"
 
-  # ---------------------------------------------------------------------------
-  # restapi-server – Application under test
-  # ---------------------------------------------------------------------------
-  restapi-server:
-    build:
-      context: ../../
-      dockerfile: Dockerfile
-    container_name: restapi-test-server
-    environment:
-      APP_SERVER_PORT: ${APP_SERVER_PORT:-8080}
-      APP_LOG_LEVEL: ${LOG_LEVEL:-debug}
-      APP_SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-30s}
-      # TLS / mTLS configuration
-      APP_TLS_ENABLED: ${TLS_ENABLED:-true}
-      APP_TLS_CERT_PATH: /certs/server-cert.pem
-      APP_TLS_KEY_PATH: /certs/server-key.pem
-      APP_TLS_CA_PATH: /certs/ca-cert.pem
-      APP_TLS_CLIENT_AUTH: ${TLS_CLIENT_AUTH:-require}
-      # Vault PKI (disabled by default – use file certs from vault-init)
-      APP_VAULT_ENABLED: ${VAULT_ENABLED:-false}
-      APP_VAULT_ADDR: "http://vault:8200"
-      APP_VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN_ID:-myroot}
-      APP_VAULT_PKI_PATH: ${VAULT_PKI_PATH:-pki}
-      APP_VAULT_PKI_ROLE: ${VAULT_PKI_ROLE:-restapi-server}
-      # OIDC configuration
-      APP_AUTH_MODE: ${AUTH_MODE:-mtls}
-      APP_OIDC_ISSUER_URL: "http://keycloak:8090/realms/${KC_REALM:-restapi-test}"
-      APP_OIDC_CLIENT_ID: ${KC_CLIENT_ID:-restapi-server}
-      APP_OIDC_AUDIENCE: ${OIDC_AUDIENCE:-restapi-server}
-    ports:
-      - "${APP_HOST_PORT:-8080}:8080"
-    depends_on:
-      vault-init:
-        condition: service_completed_successfully
-    volumes:
-      - certs:/certs:ro
-    networks:
-      - restapi-test
-
-# =============================================================================
-# Volumes
-# =============================================================================
 volumes:
   postgres_data:
-    driver: local
   vault_data:
-    driver: local
   certs:
-    driver: local
-
-# =============================================================================
-# Networks
-# =============================================================================
-networks:
-  restapi-test:
-    driver: bridge

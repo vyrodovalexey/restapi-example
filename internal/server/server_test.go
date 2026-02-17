@@ -144,6 +144,7 @@ func TestNew(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -179,6 +180,7 @@ func TestNew_MetricsDisabled(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  false,
@@ -208,6 +210,7 @@ func TestNew_MetricsEnabled(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -232,6 +235,7 @@ func TestServer_Router(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -256,6 +260,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -289,6 +294,7 @@ func TestServer_RESTEndpoints(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -337,6 +343,7 @@ func TestServer_WebSocketEndpoint(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -362,6 +369,7 @@ func TestServer_Shutdown(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8090,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 5 * time.Second,
 		MetricsEnabled:  false,
@@ -394,6 +402,7 @@ func TestServer_ShutdownWithTimeout(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8091,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 5 * time.Second,
 		MetricsEnabled:  false,
@@ -424,6 +433,7 @@ func TestServer_HTTPServerConfiguration(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -459,6 +469,7 @@ func TestServer_MiddlewareApplied(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -490,6 +501,7 @@ func TestServer_CORSPreflight(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -519,6 +531,7 @@ func TestServer_RecoveryMiddleware(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -546,6 +559,7 @@ func TestServer_ContentType(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -583,6 +597,7 @@ func TestServer_DifferentPorts(t *testing.T) {
 			// Arrange
 			cfg := &config.Config{
 				ServerPort:      tt.port,
+				ProbePort:       0,
 				LogLevel:        "info",
 				ShutdownTimeout: 30 * time.Second,
 				MetricsEnabled:  false,
@@ -608,6 +623,7 @@ func TestBuildTLSConfig_ValidCert(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -647,6 +663,7 @@ func TestBuildTLSConfig_InvalidCertPath(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -683,6 +700,7 @@ func TestBuildTLSConfig_InvalidKeyPath(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -730,6 +748,7 @@ func TestBuildTLSConfig_ClientAuthModes(t *testing.T) {
 
 			cfg := &config.Config{
 				ServerPort:      8080,
+				ProbePort:       0,
 				LogLevel:        "info",
 				ShutdownTimeout: 30 * time.Second,
 				TLSEnabled:      true,
@@ -766,6 +785,7 @@ func TestBuildTLSConfig_WithCAPath(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -800,6 +820,7 @@ func TestBuildTLSConfig_InvalidCAPath(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -843,6 +864,7 @@ func TestBuildTLSConfig_InvalidCACert(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -880,6 +902,7 @@ func TestSetupHTTPServer_WithTLS(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -906,6 +929,7 @@ func TestSetupHTTPServer_WithTLS_InvalidCert(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -929,6 +953,7 @@ func TestServer_Start_WithInitErr(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		TLSEnabled:      true,
@@ -959,6 +984,7 @@ func TestServer_Start_WithTLS(t *testing.T) {
 
 	cfg := &config.Config{
 		ServerPort:      0, // Use port 0 for random available port
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 5 * time.Second,
 		TLSEnabled:      true,
@@ -996,6 +1022,7 @@ func TestNew_WithAuthenticator(t *testing.T) {
 	// Arrange
 	cfg := &config.Config{
 		ServerPort:      8080,
+		ProbePort:       0,
 		LogLevel:        "info",
 		ShutdownTimeout: 30 * time.Second,
 		MetricsEnabled:  true,
@@ -1034,5 +1061,263 @@ func TestNew_WithAuthenticator(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("Health endpoint status = %d, want %d (public path)", rr.Code, http.StatusOK)
+	}
+}
+
+func TestNew_WithProbeServer(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	// Act
+	server := New(cfg, logger, itemStore, nil)
+
+	// Assert
+	if server.probeServer == nil {
+		t.Error("probeServer should not be nil when ProbePort > 0")
+	}
+	if server.probeRouter == nil {
+		t.Error("probeRouter should not be nil")
+	}
+	if server.probeServer.Addr != ":9090" {
+		t.Errorf("probeServer.Addr = %s, want :9090", server.probeServer.Addr)
+	}
+}
+
+func TestNew_ProbeServerDisabled(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       0,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	// Act
+	server := New(cfg, logger, itemStore, nil)
+
+	// Assert
+	if server.probeServer != nil {
+		t.Error("probeServer should be nil when ProbePort == 0")
+	}
+	// probeRouter should still be created (for testing)
+	if server.probeRouter == nil {
+		t.Error("probeRouter should not be nil even when ProbePort == 0")
+	}
+}
+
+func TestServer_ProbeHealthEndpoint(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	server := New(cfg, logger, itemStore, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe health endpoint status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestServer_ProbeReadyEndpoint(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	server := New(cfg, logger, itemStore, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe ready endpoint status = %d, want %d", rr.Code, http.StatusOK)
+	}
+}
+
+func TestServer_ProbeMetricsEndpoint(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	server := New(cfg, logger, itemStore, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe metrics endpoint status = %d, want %d when metrics enabled", rr.Code, http.StatusOK)
+	}
+}
+
+func TestServer_ProbeMetricsDisabled(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  false,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	server := New(cfg, logger, itemStore, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusNotFound && rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("Probe metrics endpoint status = %d, want 404 or 405 when metrics disabled", rr.Code)
+	}
+}
+
+func TestServer_ProbeNoAuth(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	authenticator := &testAuthenticator{
+		err:    auth.ErrUnauthenticated,
+		method: auth.AuthMethodBasic,
+	}
+	server := New(cfg, logger, itemStore, authenticator)
+
+	// Act - Probe health should work without auth
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe health should be accessible without auth, got status %d", rr.Code)
+	}
+
+	// Act - Probe ready should work without auth
+	req = httptest.NewRequest(http.MethodGet, "/ready", nil)
+	rr = httptest.NewRecorder()
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe ready should be accessible without auth, got status %d", rr.Code)
+	}
+
+	// Act - Probe metrics should work without auth
+	req = httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr = httptest.NewRecorder()
+	server.probeRouter.ServeHTTP(rr, req)
+
+	// Assert
+	if rr.Code != http.StatusOK {
+		t.Errorf("Probe metrics should be accessible without auth, got status %d", rr.Code)
+	}
+}
+
+func TestServer_ProbeRouter(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+	server := New(cfg, logger, itemStore, nil)
+
+	// Act
+	probeRouter := server.ProbeRouter()
+
+	// Assert
+	if probeRouter == nil {
+		t.Error("ProbeRouter() returned nil")
+	}
+	if probeRouter != server.probeRouter {
+		t.Error("ProbeRouter() should return the server's probe router")
+	}
+}
+
+func TestServer_ProbeServerConfiguration(t *testing.T) {
+	// Arrange
+	cfg := &config.Config{
+		ServerPort:      8080,
+		ProbePort:       9090,
+		LogLevel:        "info",
+		ShutdownTimeout: 30 * time.Second,
+		MetricsEnabled:  true,
+	}
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	// Act
+	server := New(cfg, logger, itemStore, nil)
+
+	// Assert
+	if server.probeServer.ReadTimeout != 5*time.Second {
+		t.Errorf("probeServer.ReadTimeout = %v, want 5s", server.probeServer.ReadTimeout)
+	}
+	if server.probeServer.ReadHeaderTimeout != 2*time.Second {
+		t.Errorf("probeServer.ReadHeaderTimeout = %v, want 2s", server.probeServer.ReadHeaderTimeout)
+	}
+	if server.probeServer.WriteTimeout != 5*time.Second {
+		t.Errorf("probeServer.WriteTimeout = %v, want 5s", server.probeServer.WriteTimeout)
+	}
+	if server.probeServer.IdleTimeout != 30*time.Second {
+		t.Errorf("probeServer.IdleTimeout = %v, want 30s", server.probeServer.IdleTimeout)
+	}
+	if server.probeServer.MaxHeaderBytes != 1<<20 {
+		t.Errorf("probeServer.MaxHeaderBytes = %d, want %d", server.probeServer.MaxHeaderBytes, 1<<20)
 	}
 }

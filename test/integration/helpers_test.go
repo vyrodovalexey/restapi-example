@@ -30,7 +30,7 @@ const (
 // Default configuration values.
 const (
 	DefaultServerURL   = "http://localhost:8080"
-	DefaultKeycloakURL = "http://localhost:8180"
+	DefaultKeycloakURL = "http://localhost:8090"
 	DefaultTimeout     = 10 * time.Second
 )
 
@@ -52,6 +52,27 @@ func skipIfServiceUnavailable(t *testing.T, url string) {
 	resp, err := client.Get(url)
 	if err != nil {
 		t.Skipf("Service unavailable at %s: %v", url, err)
+	}
+	resp.Body.Close()
+}
+
+// skipIfServiceUnavailableTLS checks whether the TLS service at the
+// given URL is reachable using the provided client certificates and
+// skips the test if it is not.
+func skipIfServiceUnavailableTLS(
+	t *testing.T,
+	url, caCert, clientCert, clientKey string,
+) {
+	t.Helper()
+
+	client, err := createTLSClient(caCert, clientCert, clientKey)
+	if err != nil {
+		t.Skipf("Cannot create TLS client: %v", err)
+	}
+
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Skipf("TLS service unavailable at %s: %v", url, err)
 	}
 	resp.Body.Close()
 }
@@ -142,6 +163,49 @@ func getKeycloakToken(
 	var tokenResp keycloakTokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		return "", fmt.Errorf("decoding token response: %w", err)
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+// getKeycloakPasswordToken obtains an access token from Keycloak
+// using the resource owner password credentials (password) grant type.
+func getKeycloakPasswordToken(
+	keycloakURL, realm, clientID, clientSecret, username, password string,
+) (string, error) {
+	tokenURL := fmt.Sprintf(
+		"%s/realms/%s/protocol/openid-connect/token",
+		keycloakURL, realm,
+	)
+
+	body := fmt.Sprintf(
+		"grant_type=password&client_id=%s&client_secret=%s"+
+			"&username=%s&password=%s",
+		clientID, clientSecret, username, password,
+	)
+
+	client := &http.Client{Timeout: DefaultTimeout}
+	resp, err := client.Post(
+		tokenURL,
+		"application/x-www-form-urlencoded",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		return "", fmt.Errorf("requesting password token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf(
+			"password token request failed with status %d: %s",
+			resp.StatusCode, string(respBody),
+		)
+	}
+
+	var tokenResp keycloakTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", fmt.Errorf("decoding password token response: %w", err)
 	}
 
 	return tokenResp.AccessToken, nil

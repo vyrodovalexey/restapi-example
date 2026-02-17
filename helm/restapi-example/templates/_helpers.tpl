@@ -113,12 +113,19 @@ Return the container port based on config
 {{- end }}
 
 {{/*
+Return the probe port based on config
+*/}}
+{{- define "restapi-example.probePort" -}}
+{{- .Values.config.probePort | default 9090 }}
+{{- end }}
+
+{{/*
 Return Prometheus annotations for metrics scraping
 */}}
 {{- define "restapi-example.prometheusAnnotations" -}}
 {{- if .Values.config.metricsEnabled }}
 prometheus.io/scrape: "true"
-prometheus.io/port: {{ include "restapi-example.containerPort" . | quote }}
+prometheus.io/port: {{ include "restapi-example.probePort" . | quote }}
 prometheus.io/path: "/metrics"
 {{- end }}
 {{- end }}

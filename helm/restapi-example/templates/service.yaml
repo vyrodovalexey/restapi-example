@@ -15,6 +15,10 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    - port: {{ .Values.service.probePort | default 9090 }}
+      targetPort: probe
+      protocol: TCP
+      name: probe
     {{- if .Values.config.tls.enabled }}
     - port: {{ .Values.service.tlsPort | default 8443 }}
       targetPort: https
