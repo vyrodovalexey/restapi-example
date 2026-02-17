@@ -146,31 +146,54 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [lint, govulncheck, unit-tests, functional-tests]
     continue-on-error: true
     permissions:
       contents: read
     services:
       vault:
-        image: hashicorp/vault:1.15
+        image: hashicorp/vault:1.17
         env:
-          VAULT_DEV_ROOT_TOKEN_ID: test-root-token
-          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+          VAULT_DEV_ROOT_TOKEN_ID: myroot
+          VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+          VAULT_ADDR: "http://127.0.0.1:8200"
         ports:
           - 8200:8200
         options: >-
-          --health-cmd="vault status"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-      keycloak:
-        image: quay.io/keycloak/keycloak:23.0
+          --cap-add IPC_LOCK
+          --health-cmd "vault status"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+          --health-start-period 5s
+      # Keycloak DB
+      keycloakdb:
+        image: postgres:16
+        ports:
+          - 5432:5432
         env:
+          POSTGRES_DB: keycloak
+          POSTGRES_USER: keycloak
+          POSTGRES_PASSWORD: password
+
+      keycloak:
+        image: vyrodovalexey/keycloak-test:26.5
+        env:
+          KC_DB: postgres
+          KC_DB_URL: jdbc:postgresql://keycloakdb:5432/keycloak
+          KC_DB_USERNAME: keycloak
+          KC_DB_PASSWORD: password
+          KC_HOSTNAME: 127.0.0.1
+          KC_HTTP_PORT: 8090
+          KC_HOSTNAME_STRICT: "false"
+          KC_HOSTNAME_STRICT_HTTPS: "false"
+          KC_LOG_LEVEL: info
+          KC_METRICS_ENABLED: "true"
+          KC_HEALTH_ENABLED: "true"
           KEYCLOAK_ADMIN: admin
           KEYCLOAK_ADMIN_PASSWORD: admin
-          KC_HTTP_PORT: 8180
         ports:
-          - 8180:8180
+          - 8090:8090
+          - 8091:9000
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -184,7 +207,7 @@ jobs:
       - name: Run integration tests
         env:
           INTEGRATION_SERVER_URL: http://localhost:8080
-          INTEGRATION_KEYCLOAK_URL: http://localhost:8180
+          INTEGRATION_KEYCLOAK_URL: http://127.0.0.1:8090
           INTEGRATION_API_KEY: "test-key:test-service"
         run: |
           go test -race -v -coverprofile=coverage-integration.out -covermode=atomic -tags=integration -timeout=5m ./test/integration/... || true
@@ -205,7 +228,6 @@ jobs:
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [lint, govulncheck, unit-tests, functional-tests]
     continue-on-error: true
     permissions:
       contents: read
