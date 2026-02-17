@@ -4,7 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      - master
   push:
     tags:
       - 'v*'
@@ -15,10 +14,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.25.5'
-  GOLANGCI_LINT_VERSION: 'v2.7.2'
+  GO_VERSION: '1.25.7'
+  GOLANGCI_LINT_VERSION: 'v2.8.0'
   DOCKER_REGISTRY: ghcr.io
   DOCKER_IMAGE: ghcr.io/${{ github.repository }}
+  HELM_VERSION: 'v3.17.3'
+  HELM_CHART_PATH: 'helm/restapi-example'
+  HELM_RELEASE_NAME: 'restapi-example'
+  HELM_NAMESPACE: 'restapi-example-test'
 
 jobs:
   # ===========================================================================
@@ -32,16 +35,16 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
           version: ${{ env.GOLANGCI_LINT_VERSION }}
           args: --timeout=5m
@@ -53,10 +56,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -74,10 +77,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -87,7 +90,7 @@ jobs:
           go test -race -coverprofile=coverage-unit.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-unit.out
@@ -97,7 +100,7 @@ jobs:
           verbose: true
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-unit
           path: coverage-unit.out
@@ -110,10 +113,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -123,7 +126,7 @@ jobs:
           go test -race -coverprofile=coverage-functional.out -covermode=atomic -tags=functional ./test/functional/...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage-functional.out
@@ -133,11 +136,165 @@ jobs:
           verbose: true
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: coverage-functional
           path: coverage-functional.out
           retention-days: 7
+
+  # ===========================================================================
+  # Integration Tests (requires external services)
+  # ===========================================================================
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    services:
+      vault:
+        image: hashicorp/vault:1.17
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: myroot
+          VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+          VAULT_ADDR: "http://127.0.0.1:8200"
+        ports:
+          - 8200:8200
+        options: >-
+          --cap-add IPC_LOCK
+          --health-cmd "vault status"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+          --health-start-period 5s
+      # Keycloak DB
+      keycloakdb:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_DB: keycloak
+          POSTGRES_USER: keycloak
+          POSTGRES_PASSWORD: password
+
+      # Custom image with pre-imported realm (GitHub Actions services don't support 'command')
+      keycloak:
+        image: vyrodovalexey/keycloak-test:26.5
+        env:
+          KC_DB: postgres
+          KC_DB_URL: jdbc:postgresql://keycloakdb:5432/keycloak
+          KC_DB_USERNAME: keycloak
+          KC_DB_PASSWORD: password
+          KC_HOSTNAME: 127.0.0.1
+          KC_HTTP_PORT: 8090
+          KC_HTTP_ENABLED: "true"
+          KC_HOSTNAME_STRICT: "false"
+          KC_HOSTNAME_STRICT_HTTPS: "false"
+          KC_SPI_REALM_DEFAULT_SSL_REQUIRED: none
+          KC_LOG_LEVEL: info
+          KC_METRICS_ENABLED: "true"
+          KC_HEALTH_ENABLED: "true"
+          KEYCLOAK_ADMIN: admin
+          KEYCLOAK_ADMIN_PASSWORD: admin
+        ports:
+          - 8090:8090
+          - 8091:9000
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        env:
+          INTEGRATION_SERVER_URL: http://localhost:8080
+          INTEGRATION_KEYCLOAK_URL: http://127.0.0.1:8090
+          INTEGRATION_API_KEY: "test-key:test-service"
+          INTEGRATION_OIDC_CLIENT_ID: restapi-server
+          INTEGRATION_OIDC_CLIENT_SECRET: restapi-server-secret
+          INTEGRATION_OIDC_REALM: restapi-test
+        run: |
+          go test -race -v -coverprofile=coverage-integration.out -covermode=atomic -tags=integration -timeout=5m ./test/integration/... || true
+
+      - name: Upload integration coverage artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: coverage-integration
+          path: coverage-integration.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ===========================================================================
+  # E2E Tests (requires docker-compose environment)
+  # ===========================================================================
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build server binary
+        run: |
+          CGO_ENABLED=0 go build -o bin/server ./cmd/server
+
+      - name: Start server in background
+        env:
+          APP_SERVER_PORT: "8080"
+          APP_LOG_LEVEL: info
+          APP_AUTH_MODE: apikey
+          APP_API_KEYS: "e2e-test-key-001:e2e-test-service"
+        run: |
+          ./bin/server &
+          echo $! > /tmp/server.pid
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 1
+          done
+
+      - name: Run E2E tests
+        env:
+          INTEGRATION_SERVER_URL: http://localhost:8080
+          INTEGRATION_API_KEY: "e2e-test-key-001"
+        run: |
+          go test -race -v -coverprofile=coverage-e2e.out -covermode=atomic -tags=e2e -timeout=5m ./test/e2e/... || true
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill "$(cat /tmp/server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload E2E coverage artifact
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: coverage-e2e
+          path: coverage-e2e.out
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ===========================================================================
   # Sequential Jobs: SonarCloud, Build, Docker
@@ -146,27 +303,52 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
-    needs: [lint, govulncheck, unit-tests, functional-tests]
+    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests, e2e-tests]
+    if: ${{ !cancelled() && needs.unit-tests.result == 'success' && needs.functional-tests.result == 'success' }}
     permissions:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0  # Required for SonarCloud
 
       - name: Download unit coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
         with:
           name: coverage-unit
 
       - name: Download functional coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
         with:
           name: coverage-functional
 
+      - name: Download integration coverage
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        continue-on-error: true
+        with:
+          name: coverage-integration
+
+      - name: Download E2E coverage
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v7.0.0
+        continue-on-error: true
+        with:
+          name: coverage-e2e
+
+      - name: Determine coverage paths
+        id: coverage
+        run: |
+          PATHS="coverage-unit.out,coverage-functional.out"
+          if [ -f coverage-integration.out ]; then
+            PATHS="${PATHS},coverage-integration.out"
+          fi
+          if [ -f coverage-e2e.out ]; then
+            PATHS="${PATHS},coverage-e2e.out"
+          fi
+          echo "paths=${PATHS}" >> $GITHUB_OUTPUT
+
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarqube-scan-action@a31c9398be7ace6bbfaf30c0bd5d415f843d45e9 # v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -174,11 +356,12 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
             -Dsonar.organization=${{ github.repository_owner }}
-            -Dsonar.go.coverage.reportPaths=coverage-unit.out,coverage-functional.out
+            -Dsonar.go.coverage.reportPaths=${{ steps.coverage.outputs.paths }}
             -Dsonar.sources=.
             -Dsonar.exclusions=**/*_test.go,**/vendor/**,**/test/**
             -Dsonar.tests=.
             -Dsonar.test.inclusions=**/*_test.go,**/test/**
+            -Dsonar.qualitygate.wait=${{ !startsWith(github.ref, 'refs/tags/') }}
 
   build:
     name: Build
@@ -189,10 +372,10 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -202,7 +385,7 @@ jobs:
           make build
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: server-binary
           path: bin/server
@@ -218,14 +401,14 @@ jobs:
       packages: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ${{ env.DOCKER_IMAGE }}
           tags: |
@@ -233,7 +416,7 @@ jobs:
             type=sha,prefix=pr-
 
       - name: Build Docker image (no push)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v6.12.0
         with:
           context: .
           push: false
@@ -245,6 +428,50 @@ jobs:
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # Helm Validate (PR only)
+  # ===========================================================================
+
+  helm-validate:
+    name: Helm Validate
+    runs-on: ubuntu-latest
+    needs: [docker-build-pr]
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Create kind cluster
+        uses: helm/kind-action@92086f6be054225fa813e0a4b13787fc9088faab # v1.13.0
+        with:
+          cluster_name: helm-test
+          wait: 120s
+
+      - name: Create test namespace
+        run: |
+          kubectl create namespace ${{ env.HELM_NAMESPACE }} 
+
+      - name: Helm Lint
+        run: helm lint ${{ env.HELM_CHART_PATH }}
+
+      - name: Helm Template
+        run: helm template test-release ${{ env.HELM_CHART_PATH }} --set image.tag=test --debug
+
+      - name: Helm dry-run install
+        run: |
+          echo "==> Running Helm dry-run install..."
+          helm install --dry-run --debug test-release ${{ env.HELM_CHART_PATH }} \
+            --namespace  ${{ env.HELM_NAMESPACE }} \
+            --set image.tag=pr-${{ github.event.pull_request.number }} \
+            --set image.pullPolicy=Never
 
   # ================================
   # Sequential Stage: Build & Release
@@ -262,12 +489,12 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Setup Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v6.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -298,7 +525,7 @@ jobs:
           sha256sum server-darwin-arm64 > checksums-arm64.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           name: Release ${{ steps.version.outputs.version }}
           draft: false
@@ -313,7 +540,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: server-binary
           path: bin/server*
@@ -336,16 +563,16 @@ jobs:
       image-tag: ${{ steps.meta.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf # v3.2.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349 # v3.7.1
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ github.actor }}
@@ -353,7 +580,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ${{ env.DOCKER_IMAGE }}
           tags: |
@@ -365,7 +592,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@67a2d409c0a876cbe6b11854e3e25193efe4e62d # v6.12.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -380,7 +607,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@fc46e51fd3cb168ffb36c6d1915723c47db58abb # v0.17.7
         with:
           image: ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.version }}
           artifact-name: sbom-${{ steps.meta.outputs.version }}.spdx.json
@@ -388,7 +615,7 @@ jobs:
           upload-release-assets: false
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: sbom
           path: ./sbom.spdx.json
@@ -404,17 +631,17 @@ jobs:
       security-events: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.31.0
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
           format: 'sarif'
@@ -423,12 +650,12 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@45cbd0c69e560cd9e7cd7f8c32362050c9b7ded2 # v4.32.2
         with:
           sarif_file: 'trivy-results.sarif'
 
       - name: Run Trivy vulnerability scanner (table output)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.31.0
         with:
           image-ref: '${{ env.DOCKER_IMAGE }}:${{ needs.docker-build-push.outputs.image-tag }}'
           format: 'table'
@@ -437,9 +664,71 @@ jobs:
           exit-code: '1'
 
       - name: Upload Trivy results artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: trivy-results
           path: trivy-results.sarif
           retention-days: 30
+
+  # ===========================================================================
+  # Helm Deploy (Tag only)
+  # ===========================================================================
+
+  helm-deploy:
+    name: Helm Deploy
+    runs-on: ubuntu-latest
+    needs: [docker-build-push, trivy-scan]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Helm
+        uses: azure/setup-helm@fe7b79cd5ee1e45176fcad797de68ecaf3ca4814 # v4
+        with:
+          version: 'v3.14.0'
+
+      - name: Create kind cluster
+        uses: helm/kind-action@92086f6be054225fa813e0a4b13787fc9088faab # v1.13.0
+        with:
+          cluster_name: helm-install-test
+          wait: 120s
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build Docker image for testing
+        run: |
+          echo "==> Building Docker image for Helm install test..."
+          docker build -f Dockerfile -t restapi-example:helm-test .
+
+      - name: Load image into kind cluster
+        run: |
+          echo "==> Loading Docker image into kind cluster..."
+          kind load docker-image restapi-example:helm-test --name helm-install-test
+
+      - name: Create test namespace
+        run: |
+          kubectl create namespace ${{ env.HELM_NAMESPACE }} 
+
+      - name: Helm install
+        run: |
+          echo "==> Installing Helm chart..."
+          helm install ${{ env.HELM_RELEASE_NAME }} ${{ env.HELM_CHART_PATH}} \
+            --namespace  ${{ env.HELM_NAMESPACE }} \
+            --set image.repository=restapi-example \
+            --set image.tag=helm-test \
+            --set image.pullPolicy=Never \
+            --wait \
+            --timeout 5m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ env.HELM_RELEASE_NAME }} \
+            --namespace ${{ env.HELM_NAMESPACE }} \
+            --timeout=3m
+          echo "Deployment successful!"
+          kubectl get pods -n ${{ env.HELM_NAMESPACE }} -l app.kubernetes.io/name=restapi-example

@@ -1,3 +1,6 @@
+// websocket.go implements the WebSocket handler that upgrades HTTP connections
+// and streams random values to connected clients at regular intervals.
+
 package handler
 
 import (
@@ -24,12 +27,19 @@ const (
 	sendInterval   = 1 * time.Second
 )
 
+// connState holds per-connection state including write synchronization.
+type connState struct {
+	cancel  context.CancelFunc
+	writeMu sync.Mutex // serializes all writes to this connection
+}
+
 // WebSocketHandler handles WebSocket connections.
 type WebSocketHandler struct {
 	upgrader websocket.Upgrader
 	logger   *zap.Logger
 	mu       sync.RWMutex
-	clients  map[*websocket.Conn]context.CancelFunc
+	clients  map[*websocket.Conn]*connState
+	wg       sync.WaitGroup // tracks active writePump goroutines
 }
 
 // NewWebSocketHandler creates a new WebSocketHandler instance.
@@ -43,7 +53,7 @@ func NewWebSocketHandler(logger *zap.Logger) *WebSocketHandler {
 			},
 		},
 		logger:  logger,
-		clients: make(map[*websocket.Conn]context.CancelFunc),
+		clients: make(map[*websocket.Conn]*connState),
 	}
 }
 
@@ -53,6 +63,8 @@ func (h *WebSocketHandler) RegisterRoutes(router *mux.Router) {
 }
 
 // HandleWebSocket handles WebSocket connection requests.
+//
+//nolint:contextcheck // intentional: WebSocket connections outlive the HTTP request context
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -61,17 +73,23 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Use background context instead of request context because the HTTP request
-	// context gets cancelled when the handler returns, but WebSocket connections
+	// context gets canceled when the handler returns, but WebSocket connections
 	// need to persist beyond the initial HTTP upgrade.
 	ctx, cancel := context.WithCancel(context.Background())
 
+	state := &connState{cancel: cancel}
+
 	h.mu.Lock()
-	h.clients[conn] = cancel
+	h.clients[conn] = state
 	h.mu.Unlock()
 
 	h.logger.Info("websocket client connected", zap.String("remote_addr", conn.RemoteAddr().String()))
 
-	go h.writePump(ctx, conn)
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.writePump(ctx, conn, state)
+	}()
 	go h.readPump(ctx, conn, cancel)
 }
 
@@ -113,7 +131,7 @@ func (h *WebSocketHandler) readPump(ctx context.Context, conn *websocket.Conn, c
 }
 
 // writePump sends random values to the WebSocket connection every second.
-func (h *WebSocketHandler) writePump(ctx context.Context, conn *websocket.Conn) {
+func (h *WebSocketHandler) writePump(ctx context.Context, conn *websocket.Conn, state *connState) {
 	ticker := time.NewTicker(sendInterval)
 	pingTicker := time.NewTicker(pingPeriod)
 
@@ -125,15 +143,15 @@ func (h *WebSocketHandler) writePump(ctx context.Context, conn *websocket.Conn) 
 	for {
 		select {
 		case <-ctx.Done():
-			h.sendCloseMessage(conn)
+			h.sendCloseMessage(conn, state)
 			return
 		case <-ticker.C:
-			if err := h.sendRandomValue(conn); err != nil {
+			if err := h.sendRandomValue(conn, state); err != nil {
 				h.logger.Debug("failed to send random value", zap.Error(err))
 				return
 			}
 		case <-pingTicker.C:
-			if err := h.sendPing(conn); err != nil {
+			if err := h.sendPing(conn, state); err != nil {
 				h.logger.Debug("failed to send ping", zap.Error(err))
 				return
 			}
@@ -142,7 +160,7 @@ func (h *WebSocketHandler) writePump(ctx context.Context, conn *websocket.Conn) 
 }
 
 // sendRandomValue sends a random value message to the connection.
-func (h *WebSocketHandler) sendRandomValue(conn *websocket.Conn) error {
+func (h *WebSocketHandler) sendRandomValue(conn *websocket.Conn, state *connState) error {
 	value, err := generateSecureRandomInt()
 	if err != nil {
 		h.logger.Error("failed to generate random value", zap.Error(err))
@@ -150,6 +168,9 @@ func (h *WebSocketHandler) sendRandomValue(conn *websocket.Conn) error {
 	}
 
 	msg := model.NewRandomValueMessage(value)
+
+	state.writeMu.Lock()
+	defer state.writeMu.Unlock()
 
 	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 		return err
@@ -159,7 +180,10 @@ func (h *WebSocketHandler) sendRandomValue(conn *websocket.Conn) error {
 }
 
 // sendPing sends a ping message to the connection.
-func (h *WebSocketHandler) sendPing(conn *websocket.Conn) error {
+func (h *WebSocketHandler) sendPing(conn *websocket.Conn, state *connState) error {
+	state.writeMu.Lock()
+	defer state.writeMu.Unlock()
+
 	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 		return err
 	}
@@ -167,7 +191,10 @@ func (h *WebSocketHandler) sendPing(conn *websocket.Conn) error {
 }
 
 // sendCloseMessage sends a close message to the connection.
-func (h *WebSocketHandler) sendCloseMessage(conn *websocket.Conn) {
+func (h *WebSocketHandler) sendCloseMessage(conn *websocket.Conn, state *connState) {
+	state.writeMu.Lock()
+	defer state.writeMu.Unlock()
+
 	if err := conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
 		h.logger.Debug("failed to set write deadline for close", zap.Error(err))
 		return
@@ -184,30 +211,28 @@ func (h *WebSocketHandler) removeClient(conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if cancel, exists := h.clients[conn]; exists {
-		cancel()
+	if state, exists := h.clients[conn]; exists {
+		state.cancel()
 		delete(h.clients, conn)
 		h.logger.Info("websocket client disconnected", zap.String("remote_addr", conn.RemoteAddr().String()))
 	}
 }
 
 // CloseAllConnections closes all active WebSocket connections.
+// It cancels all client contexts to trigger writePump goroutines to send
+// close messages, waits for them to finish via sync.WaitGroup, then
+// forcibly closes the underlying connections.
 func (h *WebSocketHandler) CloseAllConnections() {
 	h.mu.Lock()
-	// Copy the clients map to avoid holding the lock while closing
-	clients := make(map[*websocket.Conn]context.CancelFunc, len(h.clients))
-	for conn, cancel := range h.clients {
-		clients[conn] = cancel
+	// Cancel all contexts first — this triggers writePump goroutines to
+	// send close messages and then exit.
+	for _, state := range h.clients {
+		state.cancel()
 	}
 	h.mu.Unlock()
 
-	// Cancel all contexts first - this will trigger writePump to send close messages
-	for _, cancel := range clients {
-		cancel()
-	}
-
-	// Give writePump goroutines time to send close messages
-	time.Sleep(100 * time.Millisecond)
+	// Wait for all writePump goroutines to finish sending close messages.
+	h.wg.Wait()
 
 	// Now close all connections
 	h.mu.Lock()

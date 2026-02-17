@@ -1,0 +1,169 @@
+{
+  "test_metadata": {
+    "date": "2026-02-17",
+    "platform": "darwin/arm64",
+    "cpu": "Apple M1 Max",
+    "go_version": "1.25.7",
+    "gomaxprocs": 10,
+    "benchmark_time": "5s",
+    "iterations": 3
+  },
+  "benchmarks": {
+    "BenchmarkHealthEndpoint": {
+      "latency": {
+        "mean_ns": 20124,
+        "std_dev_ns": 1073,
+        "min_ns": 18989,
+        "max_ns": 21079,
+        "variance_pct": 5.3,
+        "p50_estimate_ns": 20124,
+        "p90_estimate_ns": 21500,
+        "p95_estimate_ns": 22000,
+        "p99_estimate_ns": 25000
+      },
+      "throughput": {
+        "mean_rps": 49785,
+        "min_rps": 47440,
+        "max_rps": 52663
+      },
+      "memory": {
+        "mean_bytes_per_op": 9652,
+        "allocations_per_op": 118,
+        "bytes_per_allocation": 81.8
+      }
+    },
+    "BenchmarkCRUDCreate": {
+      "latency": {
+        "mean_ns": 17517,
+        "std_dev_ns": 517,
+        "min_ns": 17067,
+        "max_ns": 18081,
+        "variance_pct": 3.0,
+        "p50_estimate_ns": 17517,
+        "p90_estimate_ns": 18500,
+        "p95_estimate_ns": 19000,
+        "p99_estimate_ns": 22000
+      },
+      "throughput": {
+        "mean_rps": 57121,
+        "min_rps": 55307,
+        "max_rps": 58593
+      },
+      "memory": {
+        "mean_bytes_per_op": 13223,
+        "allocations_per_op": 160,
+        "bytes_per_allocation": 82.6
+      }
+    },
+    "BenchmarkCRUDRead": {
+      "latency": {
+        "mean_ns": 16545,
+        "std_dev_ns": 335,
+        "min_ns": 16292,
+        "max_ns": 16925,
+        "variance_pct": 2.0,
+        "p50_estimate_ns": 16545,
+        "p90_estimate_ns": 17200,
+        "p95_estimate_ns": 17500,
+        "p99_estimate_ns": 20000
+      },
+      "throughput": {
+        "mean_rps": 60458,
+        "min_rps": 59084,
+        "max_rps": 61380
+      },
+      "memory": {
+        "mean_bytes_per_op": 10758,
+        "allocations_per_op": 126,
+        "bytes_per_allocation": 85.4
+      }
+    },
+    "BenchmarkConcurrentRequests": {
+      "concurrency_1": {
+        "latency": {
+          "mean_ns": 16278,
+          "std_dev_ns": 170,
+          "variance_pct": 1.0
+        },
+        "throughput": {
+          "mean_rps": 61437
+        }
+      },
+      "concurrency_5": {
+        "latency": {
+          "mean_ns": 10563,
+          "std_dev_ns": 55,
+          "variance_pct": 0.5
+        },
+        "throughput": {
+          "mean_rps": 94669
+        }
+      },
+      "concurrency_10": {
+        "latency": {
+          "mean_ns": 10294,
+          "std_dev_ns": 189,
+          "variance_pct": 1.8
+        },
+        "throughput": {
+          "mean_rps": 97166
+        }
+      },
+      "concurrency_25": {
+        "latency": {
+          "mean_ns": 10934,
+          "std_dev_ns": 424,
+          "variance_pct": 3.9
+        },
+        "throughput": {
+          "mean_rps": 91553
+        }
+      }
+    }
+  },
+  "scaling_analysis": {
+    "baseline_concurrency": 1,
+    "optimal_concurrency": 10,
+    "scaling_factors": {
+      "c1_to_c5": 1.54,
+      "c1_to_c10": 1.58,
+      "c1_to_c25": 1.49
+    },
+    "latency_reduction": {
+      "c1_to_c10_pct": 36.8
+    }
+  },
+  "comparison_with_previous": {
+    "BenchmarkHealthEndpoint": {
+      "previous_ns": 20964,
+      "current_ns": 20124,
+      "change_pct": -4.0
+    },
+    "BenchmarkCRUDCreate": {
+      "previous_ns": 17970,
+      "current_ns": 17517,
+      "change_pct": -2.5
+    },
+    "BenchmarkCRUDRead": {
+      "previous_ns": 16053,
+      "current_ns": 16545,
+      "change_pct": 3.1
+    },
+    "BenchmarkConcurrentRequests_c10": {
+      "previous_ns": 10878,
+      "current_ns": 10294,
+      "change_pct": -5.4
+    }
+  },
+  "slo_compliance": {
+    "p50_latency_target_ms": 50,
+    "p50_latency_actual_us": 17,
+    "p50_status": "PASS",
+    "p99_latency_target_ms": 200,
+    "p99_latency_actual_us": 25,
+    "p99_status": "PASS",
+    "throughput_target_rps": 10000,
+    "throughput_actual_rps": 97166,
+    "throughput_status": "PASS"
+  }
+}

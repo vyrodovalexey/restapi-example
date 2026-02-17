@@ -67,18 +67,23 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/bin/server /app/server
 
+# Create directory for TLS certificate mounting
+RUN mkdir -p /certs && chown appuser:appgroup /certs
+
 # Change ownership to non-root user
 RUN chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose ports (HTTP, HTTPS/TLS, and probe)
 EXPOSE 8080
+EXPOSE 8443
+EXPOSE 9090
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Health check - uses dedicated probe port (always HTTP)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost:9090/health || exit 1
 
 # Set entrypoint
 ENTRYPOINT ["/app/server"]

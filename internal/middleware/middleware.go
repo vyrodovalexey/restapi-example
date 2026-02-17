@@ -3,12 +3,16 @@ package middleware
 
 import (
 	"bufio"
+	"context"
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
@@ -110,7 +114,17 @@ func Chain(middlewares ...Middleware) Middleware {
 	}
 }
 
+// healthPaths contains paths that should be logged at Debug level
+// to reduce log noise from frequent health/readiness probes.
+var healthPaths = map[string]bool{
+	"/health":  true,
+	"/ready":   true,
+	"/metrics": true,
+}
+
 // Logging returns a middleware that logs HTTP requests.
+// Health, readiness, and metrics endpoints are logged at Debug level
+// to reduce noise from frequent probe requests.
 func Logging(logger *zap.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +134,7 @@ func Logging(logger *zap.Logger) Middleware {
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start)
-			logger.Info("http request",
+			fields := []zap.Field{
 				zap.String("method", r.Method),
 				zap.String("path", r.URL.Path),
 				zap.Int("status", rw.statusCode),
@@ -128,7 +142,13 @@ func Logging(logger *zap.Logger) Middleware {
 				zap.String("remote_addr", r.RemoteAddr),
 				zap.String("user_agent", r.UserAgent()),
 				zap.String("request_id", getRequestID(r)),
-			)
+			}
+
+			if healthPaths[r.URL.Path] {
+				logger.Debug("http request", fields...)
+			} else {
+				logger.Info("http request", fields...)
+			}
 		})
 	}
 }
@@ -155,6 +175,7 @@ func Recovery(logger *zap.Logger) Middleware {
 }
 
 // RequestID returns a middleware that adds a unique request ID to each request.
+// The ID is stored in the response header, request header, and request context.
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +187,8 @@ func RequestID() Middleware {
 			w.Header().Set(RequestIDHeader, requestID)
 			r.Header.Set(RequestIDHeader, requestID)
 
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -184,9 +206,10 @@ func Metrics() Middleware {
 			next.ServeHTTP(rw, r)
 
 			duration := time.Since(start).Seconds()
-			path := normalizePath(r.URL.Path)
+			path := normalizeRequestPath(r)
+			status := strconv.Itoa(rw.statusCode)
 
-			httpRequestsTotal.WithLabelValues(r.Method, path, http.StatusText(rw.statusCode)).Inc()
+			httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
 			httpRequestDuration.WithLabelValues(r.Method, path).Observe(duration)
 		})
 	}
@@ -199,21 +222,27 @@ func CORS(allowedOrigins []string, allowedMethods []string, allowedHeaders []str
 		originsMap[origin] = true
 	}
 
-	methodsStr := joinStrings(allowedMethods)
-	headersStr := joinStrings(allowedHeaders)
+	methodsStr := strings.Join(allowedMethods, ", ")
+	headersStr := strings.Join(allowedHeaders, ", ")
+
+	hasWildcard := originsMap["*"]
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 
-			// Check if origin is allowed or if wildcard is set
-			if originsMap["*"] || originsMap[origin] {
+			if hasWildcard {
+				// When wildcard is configured, allow all origins but do not
+				// set credentials header as browsers reject this combination.
 				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else if originsMap[origin] {
+				// Specific origin matched — safe to allow credentials.
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 
 			w.Header().Set("Access-Control-Allow-Methods", methodsStr)
 			w.Header().Set("Access-Control-Allow-Headers", headersStr)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 
 			// Handle preflight requests
@@ -232,26 +261,33 @@ func getRequestID(r *http.Request) string {
 	return r.Header.Get(RequestIDHeader)
 }
 
-// normalizePath normalizes the URL path for metrics to avoid high cardinality.
+// joinStrings joins strings with comma separator.
+// Retained for test compatibility; production code uses strings.Join directly.
+//
+//nolint:unused // used by unit tests in the same package
+func joinStrings(strs []string) string {
+	return strings.Join(strs, ", ")
+}
+
+// normalizePath truncates long paths for display purposes.
+// Retained for test compatibility; production code uses normalizeRequestPath.
+//
+//nolint:unused // used by unit tests in the same package
 func normalizePath(path string) string {
-	// For paths with IDs, normalize them to reduce cardinality
-	// This is a simple implementation; more sophisticated path normalization
-	// could be added based on route patterns
 	if len(path) > 50 {
 		return path[:50]
 	}
 	return path
 }
 
-// joinStrings joins strings with comma separator.
-func joinStrings(strs []string) string {
-	if len(strs) == 0 {
-		return ""
+// normalizeRequestPath extracts the route template from the matched mux route
+// to avoid high-cardinality metric labels caused by dynamic path segments.
+// Falls back to the raw URL path if no route template is available.
+func normalizeRequestPath(r *http.Request) string {
+	if route := mux.CurrentRoute(r); route != nil {
+		if tmpl, err := route.GetPathTemplate(); err == nil {
+			return tmpl
+		}
 	}
-
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += ", " + strs[i]
-	}
-	return result
+	return r.URL.Path
 }

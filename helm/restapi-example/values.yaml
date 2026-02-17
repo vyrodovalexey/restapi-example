@@ -1,0 +1,288 @@
+# Default values for restapi-example.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- Number of replicas
+replicaCount: 1
+
+image:
+  # -- Image repository
+  repository: ghcr.io/vyrodovalexey/restapi-example
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag whose default is the chart appVersion
+  tag: ""
+
+# -- Image pull secrets for private registries
+imagePullSecrets: []
+# -- Override the name of the chart
+nameOverride: ""
+# -- Override the full name of the chart
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Specifies whether a service account should be created
+  create: true
+  # -- Automatically mount a ServiceAccount's API credentials
+  automount: true
+  # -- Annotations to add to the service account
+  annotations: {}
+  # -- The name of the service account to use
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod labels
+podLabels: {}
+
+# -- Pod security context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  # -- Service type
+  type: ClusterIP
+  # -- HTTP service port
+  port: 8080
+  # -- HTTPS/TLS service port (when TLS is enabled)
+  tlsPort: 8443
+  # -- Probe port (health, ready, metrics - always HTTP)
+  probePort: 9090
+  # -- Annotations for the service
+  annotations: {}
+
+ingress:
+  # -- Enable ingress
+  enabled: false
+  # -- Ingress class name
+  className: ""
+  # -- Ingress annotations
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-secret-name: restapi-example-tls
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  # -- Ingress hosts configuration
+  hosts:
+    - host: restapi-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- Ingress TLS configuration
+  tls: []
+  #  - secretName: restapi-example-tls
+  #    hosts:
+  #      - restapi-example.local
+
+# -- Resource requests and limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# -- Liveness probe configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: probe
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+# -- Readiness probe configuration
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: probe
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+# -- Startup probe configuration (optional)
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /health
+    port: probe
+  initialDelaySeconds: 0
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 30
+  successThreshold: 1
+
+autoscaling:
+  # -- Enable Horizontal Pod Autoscaler
+  enabled: false
+  # -- Minimum number of replicas
+  minReplicas: 1
+  # -- Maximum number of replicas
+  maxReplicas: 10
+  # -- Target CPU utilization percentage
+  targetCPUUtilizationPercentage: 80
+  # -- Target memory utilization percentage
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  # -- Enable Pod Disruption Budget
+  enabled: false
+  # -- Minimum available pods (can be number or percentage)
+  minAvailable: 1
+  # -- Maximum unavailable pods (can be number or percentage)
+  # maxUnavailable: 1
+
+# -- Node selector for pod assignment
+nodeSelector: {}
+
+# -- Tolerations for pod assignment
+tolerations: []
+
+# -- Affinity rules for pod assignment
+affinity: {}
+
+# -- Additional volumes
+volumes: []
+# - name: certs
+#   secret:
+#     secretName: restapi-example-tls-certs
+
+# -- Additional volume mounts
+volumeMounts: []
+# - name: certs
+#   mountPath: /certs
+#   readOnly: true
+
+# Application configuration
+config:
+  # -- Server port (internal container port)
+  serverPort: 8080
+  # -- Probe port (health, ready, metrics - always HTTP)
+  probePort: 9090
+  # -- Log level (debug, info, warn, error)
+  logLevel: "info"
+  # -- Graceful shutdown timeout
+  shutdownTimeout: "30s"
+  # -- Enable Prometheus metrics
+  metricsEnabled: true
+  # -- OpenTelemetry OTLP endpoint (optional)
+  otlpEndpoint: ""
+
+  # Authentication configuration
+  auth:
+    # -- Authentication mode: none, mtls, oidc, basic, apikey, multi
+    mode: "none"
+
+  # TLS configuration
+  tls:
+    # -- Enable TLS
+    enabled: false
+    # -- Path to TLS certificate file (inside container)
+    certPath: "/certs/tls.crt"
+    # -- Path to TLS key file (inside container)
+    keyPath: "/certs/tls.key"
+    # -- Path to CA certificate file (inside container)
+    caPath: "/certs/ca.crt"
+    # -- TLS client authentication mode: none, request, require
+    clientAuth: "none"
+    # -- Name of existing secret containing TLS certificates
+    # Secret should have keys: tls.crt, tls.key, ca.crt
+    existingSecret: ""
+
+  # OIDC configuration (when auth.mode is "oidc" or "multi")
+  oidc:
+    # -- OIDC issuer URL
+    issuerUrl: ""
+    # -- OIDC client ID
+    clientId: ""
+    # -- OIDC audience
+    audience: ""
+
+  # Basic auth configuration (when auth.mode is "basic" or "multi")
+  basicAuth:
+    # -- Basic auth users (format: "user1:bcrypt_hash,user2:bcrypt_hash")
+    # Use existingSecret for production
+    users: ""
+    # -- Name of existing secret containing basic auth users
+    # Secret should have key: basic-auth-users
+    existingSecret: ""
+
+  # API key configuration (when auth.mode is "apikey" or "multi")
+  apiKey:
+    # -- API keys (format: "key1:name1,key2:name2")
+    # Use existingSecret for production
+    keys: ""
+    # -- Name of existing secret containing API keys
+    # Secret should have key: api-keys
+    existingSecret: ""
+
+# Vault integration for PKI/certificate management
+vault:
+  # -- Enable Vault integration
+  enabled: false
+  # -- Vault server address
+  address: "http://vault:8200"
+  # -- Vault authentication token (use existingSecret for production)
+  token: ""
+  # -- Name of existing secret containing Vault token
+  # Secret should have key: vault-token
+  existingSecret: ""
+  # -- Vault PKI secrets engine path
+  pkiPath: "pki"
+  # -- Vault PKI role name
+  pkiRole: "restapi-server"
+
+# Prometheus ServiceMonitor configuration
+serviceMonitor:
+  # -- Enable ServiceMonitor for Prometheus Operator
+  enabled: false
+  # -- Namespace for ServiceMonitor (defaults to release namespace)
+  namespace: ""
+  # -- Labels for ServiceMonitor
+  labels: {}
+  # -- Scrape interval
+  interval: "30s"
+  # -- Scrape timeout
+  scrapeTimeout: "10s"
+  # -- Metric relabeling configs
+  metricRelabelings: []
+  # -- Relabeling configs
+  relabelings: []
+
+# -- Extra environment variables
+extraEnv: []
+# - name: MY_VAR
+#   value: "my-value"
+# - name: MY_SECRET_VAR
+#   valueFrom:
+#     secretKeyRef:
+#       name: my-secret
+#       key: my-key
+
+# -- Extra environment variables from ConfigMaps or Secrets
+extraEnvFrom: []
+# - configMapRef:
+#     name: my-configmap
+# - secretRef:
+#     name: my-secret

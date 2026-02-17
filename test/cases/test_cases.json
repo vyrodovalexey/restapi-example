@@ -208,6 +208,115 @@
             "X-Request-ID": "test-request-id-12345"
           }
         }
+      ],
+      "auth_test_cases": [
+        {
+          "id": "FT-AUTH-001",
+          "name": "Public endpoints accessible without auth",
+          "description": "Health and ready endpoints are accessible without authentication even when auth is enabled",
+          "function": "TestAuthPublicEndpoints",
+          "auth_mode": "apikey",
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-002",
+          "name": "Protected endpoints require auth",
+          "description": "Protected API endpoints return 401 when no credentials are provided",
+          "function": "TestAuthProtectedEndpointsRequireAuth",
+          "auth_mode": "apikey",
+          "expected_status": 401
+        },
+        {
+          "id": "FT-AUTH-003",
+          "name": "API key access",
+          "description": "Protected endpoints are accessible with a valid API key in X-API-Key header",
+          "function": "TestAuthAPIKeyAccess",
+          "auth_mode": "apikey",
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-004",
+          "name": "Basic auth access",
+          "description": "Protected endpoints are accessible with valid basic auth credentials",
+          "function": "TestAuthBasicAccess",
+          "auth_mode": "basic",
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-005",
+          "name": "Invalid API key",
+          "description": "Invalid API key returns 401 Unauthorized",
+          "function": "TestAuthInvalidAPIKey",
+          "auth_mode": "apikey",
+          "expected_status": 401
+        },
+        {
+          "id": "FT-AUTH-006",
+          "name": "Invalid basic auth",
+          "description": "Wrong password or unknown user returns 401 Unauthorized",
+          "function": "TestAuthInvalidBasicAuth",
+          "auth_mode": "basic",
+          "expected_status": 401
+        },
+        {
+          "id": "FT-AUTH-007",
+          "name": "CRUD with API key auth",
+          "description": "Full CRUD lifecycle with API key authentication succeeds",
+          "function": "TestAuthCRUDWithAPIKey",
+          "auth_mode": "apikey",
+          "workflow": ["create", "read", "update", "list", "delete", "verify_delete"]
+        },
+        {
+          "id": "FT-AUTH-008",
+          "name": "Multi-auth with API key",
+          "description": "Multi-auth mode accepts API key authentication",
+          "function": "TestAuthMultiAuthWithAPIKey",
+          "auth_mode": "multi",
+          "auth_methods": ["apikey", "basic"],
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-009",
+          "name": "Multi-auth with basic auth",
+          "description": "Multi-auth mode accepts basic auth credentials",
+          "function": "TestAuthMultiAuthWithBasicAuth",
+          "auth_mode": "multi",
+          "auth_methods": ["apikey", "basic"],
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-010",
+          "name": "OIDC auth with valid token",
+          "description": "OIDC auth accepts a valid Bearer token and returns 200",
+          "function": "TestAuthOIDCWithValidToken",
+          "auth_mode": "oidc",
+          "expected_status": 200
+        },
+        {
+          "id": "FT-AUTH-011",
+          "name": "OIDC auth with invalid token",
+          "description": "OIDC auth rejects an invalid Bearer token and returns 401",
+          "function": "TestAuthOIDCWithInvalidToken",
+          "auth_mode": "oidc",
+          "expected_status": 401
+        },
+        {
+          "id": "FT-AUTH-012",
+          "name": "OIDC auth with expired token",
+          "description": "OIDC auth rejects an expired Bearer token and returns 401",
+          "function": "TestAuthOIDCWithExpiredToken",
+          "auth_mode": "oidc",
+          "expected_status": 401
+        },
+        {
+          "id": "FT-AUTH-013",
+          "name": "Multi-auth CRUD workflow",
+          "description": "Full CRUD lifecycle using multi-auth mode with API key succeeds",
+          "function": "TestAuthMultiAuthCRUDWorkflow",
+          "auth_mode": "multi",
+          "auth_methods": ["apikey", "basic"],
+          "workflow": ["create", "read", "update", "verify_update", "delete", "verify_delete"]
+        }
       ]
     },
     "websocket": {
@@ -282,6 +391,230 @@
         }
       ]
     }
+  },
+  "integration_tests": {
+    "test_cases": [
+      {
+        "id": "IT-001",
+        "name": "Health endpoint accessible",
+        "description": "GET /health returns 200 with healthy status against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_HealthEndpointAccessible"
+      },
+      {
+        "id": "IT-002",
+        "name": "Ready endpoint accessible",
+        "description": "GET /ready returns 200 with ready status against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_ReadyEndpointAccessible"
+      },
+      {
+        "id": "IT-003",
+        "name": "Metrics endpoint accessible",
+        "description": "GET /metrics returns 200 with Prometheus metrics",
+        "build_tag": "integration",
+        "function": "TestIntegration_MetricsEndpointAccessible"
+      },
+      {
+        "id": "IT-004",
+        "name": "CRUD operations",
+        "description": "Full create, read, update, delete lifecycle against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_CRUDOperations"
+      },
+      {
+        "id": "IT-005",
+        "name": "API key authentication",
+        "description": "Valid/invalid API key authentication against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_APIKeyAuthentication",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "IT-006",
+        "name": "Basic authentication",
+        "description": "Valid/invalid basic auth against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_BasicAuthentication",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "IT-007",
+        "name": "Unauthorized access",
+        "description": "Protected endpoints return 401 without credentials",
+        "build_tag": "integration",
+        "function": "TestIntegration_UnauthorizedAccess",
+        "skip_condition": "No auth configured"
+      },
+      {
+        "id": "IT-008",
+        "name": "mTLS authentication",
+        "description": "Mutual TLS client certificate authentication",
+        "build_tag": "integration",
+        "function": "TestIntegration_MTLSAuthentication",
+        "skip_condition": "mTLS cert paths not set"
+      },
+      {
+        "id": "IT-009",
+        "name": "OIDC authentication",
+        "description": "OIDC/JWT bearer token authentication via Keycloak",
+        "build_tag": "integration",
+        "function": "TestIntegration_OIDCAuthentication",
+        "skip_condition": "Keycloak or OIDC config not available"
+      },
+      {
+        "id": "IT-010",
+        "name": "Multi-auth integration test",
+        "description": "Multi-auth mode with API key and basic auth against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_MultiAuthAuthentication",
+        "skip_condition": "INTEGRATION_API_KEY and INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "IT-011",
+        "name": "mTLS with Vault PKI certificates",
+        "description": "Mutual TLS authentication using certificates issued by Vault PKI",
+        "build_tag": "integration",
+        "function": "TestIntegration_MTLSWithVaultPKI",
+        "skip_condition": "Vault PKI and mTLS cert paths not set"
+      }
+    ]
+  },
+  "e2e_tests": {
+    "test_cases": [
+      {
+        "id": "E2E-001",
+        "name": "Full CRUD workflow",
+        "description": "Complete create → read → update → verify → delete → verify journey",
+        "build_tag": "e2e",
+        "function": "TestE2E_FullCRUDWorkflow"
+      },
+      {
+        "id": "E2E-002",
+        "name": "API key workflow",
+        "description": "Authenticate with API key → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_APIKeyWorkflow",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "E2E-003",
+        "name": "Basic auth workflow",
+        "description": "Authenticate with basic auth → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_BasicAuthWorkflow",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "E2E-004",
+        "name": "Public endpoints always accessible",
+        "description": "Health, ready, metrics endpoints work without auth",
+        "build_tag": "e2e",
+        "function": "TestE2E_PublicEndpointsAlwaysAccessible"
+      },
+      {
+        "id": "E2E-005",
+        "name": "Unauthorized access denied",
+        "description": "All protected endpoints return 401 without credentials",
+        "build_tag": "e2e",
+        "function": "TestE2E_UnauthorizedAccessDenied",
+        "skip_condition": "No auth configured"
+      },
+      {
+        "id": "E2E-006",
+        "name": "Concurrent requests",
+        "description": "10 concurrent authenticated requests all succeed",
+        "build_tag": "e2e",
+        "function": "TestE2E_ConcurrentRequests"
+      },
+      {
+        "id": "E2E-007",
+        "name": "Graceful degradation",
+        "description": "Server handles invalid auth gracefully without crashing",
+        "build_tag": "e2e",
+        "function": "TestE2E_GracefulDegradation"
+      },
+      {
+        "id": "E2E-008",
+        "name": "mTLS workflow",
+        "description": "Authenticate with mTLS client certificate → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_MTLSWorkflow",
+        "skip_condition": "mTLS cert paths not set"
+      },
+      {
+        "id": "E2E-009",
+        "name": "OIDC workflow with Keycloak",
+        "description": "Obtain OIDC token from Keycloak → authenticate → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_OIDCWorkflowWithKeycloak",
+        "skip_condition": "Keycloak or OIDC config not available"
+      }
+    ]
+  },
+  "performance_tests": {
+    "test_cases": [
+      {
+        "id": "PERF-001",
+        "name": "Health endpoint baseline",
+        "description": "Baseline latency measurement for GET /health",
+        "build_tag": "performance",
+        "function": "BenchmarkHealthEndpoint"
+      },
+      {
+        "id": "PERF-002",
+        "name": "API key auth overhead",
+        "description": "Latency overhead of API key authentication",
+        "build_tag": "performance",
+        "function": "BenchmarkAPIKeyAuth",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "PERF-003",
+        "name": "Basic auth overhead",
+        "description": "Latency overhead of bcrypt-based basic authentication",
+        "build_tag": "performance",
+        "function": "BenchmarkBasicAuth",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "PERF-004",
+        "name": "CRUD create latency",
+        "description": "Latency measurement for POST /api/v1/items",
+        "build_tag": "performance",
+        "function": "BenchmarkCRUDCreate"
+      },
+      {
+        "id": "PERF-005",
+        "name": "CRUD read latency",
+        "description": "Latency measurement for GET /api/v1/items/{id}",
+        "build_tag": "performance",
+        "function": "BenchmarkCRUDRead"
+      },
+      {
+        "id": "PERF-006",
+        "name": "Concurrent requests throughput",
+        "description": "Throughput under varying concurrency levels (1, 5, 10, 25)",
+        "build_tag": "performance",
+        "function": "BenchmarkConcurrentRequests"
+      },
+      {
+        "id": "PERF-007",
+        "name": "OIDC auth overhead",
+        "description": "Latency overhead of OIDC/JWT bearer token authentication",
+        "build_tag": "performance",
+        "function": "BenchmarkOIDCAuth",
+        "skip_condition": "Keycloak or OIDC config not available"
+      },
+      {
+        "id": "PERF-008",
+        "name": "Multi-auth overhead",
+        "description": "Latency overhead of multi-method authentication (API key + basic)",
+        "build_tag": "performance",
+        "function": "BenchmarkMultiAuth",
+        "skip_condition": "Multi-auth config not available"
+      }
+    ]
   },
   "test_data": {
     "valid_items": [

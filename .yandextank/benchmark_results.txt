@@ -1,0 +1,27 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/vyrodovalexey/restapi-example/test/performance
+cpu: Apple M1 Max
+BenchmarkHealthEndpoint-10        	  268866	     21079 ns/op	    9728 B/op	     118 allocs/op
+BenchmarkHealthEndpoint-10        	  259136	     20304 ns/op	    9666 B/op	     118 allocs/op
+BenchmarkHealthEndpoint-10        	  333564	     18989 ns/op	    9562 B/op	     118 allocs/op
+BenchmarkCRUDCreate-10            	  344654	     17067 ns/op	   13262 B/op	     160 allocs/op
+BenchmarkCRUDCreate-10            	  403815	     17402 ns/op	   13537 B/op	     160 allocs/op
+BenchmarkCRUDCreate-10            	  340982	     18081 ns/op	   12871 B/op	     160 allocs/op
+BenchmarkCRUDRead-10              	  409269	     16925 ns/op	   10759 B/op	     126 allocs/op
+BenchmarkCRUDRead-10              	  329797	     16418 ns/op	   10757 B/op	     126 allocs/op
+BenchmarkCRUDRead-10              	  368277	     16292 ns/op	   10758 B/op	     126 allocs/op
+BenchmarkConcurrentRequests/concurrency_1-10         	  404611	     16358 ns/op	   10159 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_1-10         	  439616	     16396 ns/op	   10166 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_1-10         	  334776	     16080 ns/op	   10166 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_5-10         	  609460	     10505 ns/op	   10156 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_5-10         	  653113	     10571 ns/op	   10156 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_5-10         	  665520	     10614 ns/op	   10156 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_10-10        	  656236	     10202 ns/op	   10157 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_10-10        	  670413	     10515 ns/op	   10157 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_10-10        	  703662	     10165 ns/op	   10157 B/op	     122 allocs/op
+BenchmarkConcurrentRequests/concurrency_25-10        	  635052	     10815 ns/op	   10113 B/op	     121 allocs/op
+BenchmarkConcurrentRequests/concurrency_25-10        	  566792	     10578 ns/op	   10112 B/op	     121 allocs/op
+BenchmarkConcurrentRequests/concurrency_25-10        	  462655	     11408 ns/op	   10111 B/op	     121 allocs/op
+PASS
+ok  	github.com/vyrodovalexey/restapi-example/test/performance	159.030s

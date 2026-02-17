@@ -1,0 +1,18 @@
+apiVersion: v2
+name: restapi-example
+description: A Helm chart for REST API and WebSocket Server
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - rest-api
+  - websocket
+  - golang
+  - microservice
+home: https://github.com/vyrodovalexey/restapi-example
+sources:
+  - https://github.com/vyrodovalexey/restapi-example
+maintainers:
+  - name: vyrodovalexey
+    url: https://github.com/vyrodovalexey
+kubeVersion: ">=1.23.0-0"

@@ -453,3 +453,133 @@ func TestWebSocketHandler_CloseAllConnections_WithConnections(t *testing.T) {
 		t.Error("Connection should be closed")
 	}
 }
+
+func TestWebSocketHandler_SendPing(t *testing.T) {
+	// Arrange
+	logger := zap.NewNop()
+	wsHandler := NewWebSocketHandler(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wsHandler.HandleWebSocket(w, r)
+	}))
+	defer func() {
+		wsHandler.CloseAllConnections()
+		server.Close()
+	}()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	// Give time for connection to be registered
+	time.Sleep(100 * time.Millisecond)
+
+	// Act - Get the underlying connection and its state from the handler's clients map
+	wsHandler.mu.RLock()
+	var serverConn *websocket.Conn
+	var serverState *connState
+	for c, s := range wsHandler.clients {
+		serverConn = c
+		serverState = s
+		break
+	}
+	wsHandler.mu.RUnlock()
+
+	if serverConn == nil {
+		t.Fatal("No server connection found")
+	}
+
+	// Set up ping handler on client side to verify ping was received
+	pingReceived := make(chan struct{}, 1)
+	conn.SetPingHandler(func(_ string) error {
+		pingReceived <- struct{}{}
+		return nil
+	})
+
+	// Send ping from server
+	err = wsHandler.sendPing(serverConn, serverState)
+	if err != nil {
+		t.Fatalf("sendPing() error = %v", err)
+	}
+
+	// Read on client side to trigger ping handler
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	go func() {
+		// ReadMessage will process control frames (ping) internally
+		conn.ReadMessage() //nolint:errcheck // we just need to trigger the read
+	}()
+
+	// Wait for ping to be received
+	select {
+	case <-pingReceived:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Error("Ping was not received within timeout")
+	}
+}
+
+func TestWebSocketHandler_SendRandomValue(t *testing.T) {
+	// Arrange
+	logger := zap.NewNop()
+	wsHandler := NewWebSocketHandler(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wsHandler.HandleWebSocket(w, r)
+	}))
+	defer func() {
+		wsHandler.CloseAllConnections()
+		server.Close()
+	}()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	// Give time for connection to be registered
+	time.Sleep(100 * time.Millisecond)
+
+	// Get the server-side connection and its state
+	wsHandler.mu.RLock()
+	var serverConn *websocket.Conn
+	var serverState *connState
+	for c, s := range wsHandler.clients {
+		serverConn = c
+		serverState = s
+		break
+	}
+	wsHandler.mu.RUnlock()
+
+	if serverConn == nil {
+		t.Fatal("No server connection found")
+	}
+
+	// Act - Call sendRandomValue directly
+	err = wsHandler.sendRandomValue(serverConn, serverState)
+	if err != nil {
+		t.Fatalf("sendRandomValue() error = %v", err)
+	}
+
+	// Read the message on client side
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	var msg model.WebSocketMessage
+	err = conn.ReadJSON(&msg)
+	if err != nil {
+		t.Fatalf("Failed to read message: %v", err)
+	}
+
+	// Assert
+	if msg.Type != model.WSMessageTypeRandomValue {
+		t.Errorf("Message type = %s, want %s", msg.Type, model.WSMessageTypeRandomValue)
+	}
+	if msg.Timestamp.IsZero() {
+		t.Error("Timestamp should not be zero")
+	}
+}

@@ -25,6 +25,7 @@ coverage.html
 coverage-functional.out
 *.test
 *.prof
+.yandextank
 
 # Documentation
 *.md

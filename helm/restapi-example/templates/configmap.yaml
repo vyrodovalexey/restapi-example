@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "restapi-example.configmapName" . }}
+  labels:
+    {{- include "restapi-example.labels" . | nindent 4 }}
+data:
+  # Server configuration
+  APP_SERVER_PORT: {{ .Values.config.serverPort | quote }}
+  APP_PROBE_PORT: {{ .Values.config.probePort | quote }}
+  APP_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  APP_SHUTDOWN_TIMEOUT: {{ .Values.config.shutdownTimeout | quote }}
+  APP_METRICS_ENABLED: {{ .Values.config.metricsEnabled | quote }}
+  {{- if .Values.config.otlpEndpoint }}
+  APP_OTLP_ENDPOINT: {{ .Values.config.otlpEndpoint | quote }}
+  {{- end }}
+
+  # Authentication configuration
+  APP_AUTH_MODE: {{ .Values.config.auth.mode | quote }}
+
+  # TLS configuration
+  APP_TLS_ENABLED: {{ .Values.config.tls.enabled | quote }}
+  {{- if .Values.config.tls.enabled }}
+  APP_TLS_CERT_PATH: {{ .Values.config.tls.certPath | quote }}
+  APP_TLS_KEY_PATH: {{ .Values.config.tls.keyPath | quote }}
+  APP_TLS_CA_PATH: {{ .Values.config.tls.caPath | quote }}
+  APP_TLS_CLIENT_AUTH: {{ .Values.config.tls.clientAuth | quote }}
+  {{- end }}
+
+  # OIDC configuration
+  {{- if or (eq .Values.config.auth.mode "oidc") (eq .Values.config.auth.mode "multi") }}
+  {{- if .Values.config.oidc.issuerUrl }}
+  APP_OIDC_ISSUER_URL: {{ .Values.config.oidc.issuerUrl | quote }}
+  {{- end }}
+  {{- if .Values.config.oidc.clientId }}
+  APP_OIDC_CLIENT_ID: {{ .Values.config.oidc.clientId | quote }}
+  {{- end }}
+  {{- if .Values.config.oidc.audience }}
+  APP_OIDC_AUDIENCE: {{ .Values.config.oidc.audience | quote }}
+  {{- end }}
+  {{- end }}
+
+  # Vault configuration
+  {{- if .Values.vault.enabled }}
+  APP_VAULT_ENABLED: "true"
+  APP_VAULT_ADDR: {{ .Values.vault.address | quote }}
+  APP_VAULT_PKI_PATH: {{ .Values.vault.pkiPath | quote }}
+  APP_VAULT_PKI_ROLE: {{ .Values.vault.pkiRole | quote }}
+  {{- end }}

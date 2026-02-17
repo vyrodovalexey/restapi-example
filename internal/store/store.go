@@ -13,6 +13,7 @@ var (
 	ErrNotFound      = errors.New("item not found")
 	ErrAlreadyExists = errors.New("item already exists")
 	ErrInvalidID     = errors.New("invalid item ID")
+	ErrNilItem       = errors.New("item cannot be nil")
 )
 
 // Store defines the interface for item storage operations.
