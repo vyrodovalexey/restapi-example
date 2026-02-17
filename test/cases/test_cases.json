@@ -283,6 +283,182 @@
       ]
     }
   },
+  "integration_tests": {
+    "test_cases": [
+      {
+        "id": "IT-001",
+        "name": "Health endpoint accessible",
+        "description": "GET /health returns 200 with healthy status against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_HealthEndpointAccessible"
+      },
+      {
+        "id": "IT-002",
+        "name": "Ready endpoint accessible",
+        "description": "GET /ready returns 200 with ready status against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_ReadyEndpointAccessible"
+      },
+      {
+        "id": "IT-003",
+        "name": "Metrics endpoint accessible",
+        "description": "GET /metrics returns 200 with Prometheus metrics",
+        "build_tag": "integration",
+        "function": "TestIntegration_MetricsEndpointAccessible"
+      },
+      {
+        "id": "IT-004",
+        "name": "CRUD operations",
+        "description": "Full create, read, update, delete lifecycle against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_CRUDOperations"
+      },
+      {
+        "id": "IT-005",
+        "name": "API key authentication",
+        "description": "Valid/invalid API key authentication against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_APIKeyAuthentication",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "IT-006",
+        "name": "Basic authentication",
+        "description": "Valid/invalid basic auth against running server",
+        "build_tag": "integration",
+        "function": "TestIntegration_BasicAuthentication",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "IT-007",
+        "name": "Unauthorized access",
+        "description": "Protected endpoints return 401 without credentials",
+        "build_tag": "integration",
+        "function": "TestIntegration_UnauthorizedAccess",
+        "skip_condition": "No auth configured"
+      },
+      {
+        "id": "IT-008",
+        "name": "mTLS authentication",
+        "description": "Mutual TLS client certificate authentication",
+        "build_tag": "integration",
+        "function": "TestIntegration_MTLSAuthentication",
+        "skip_condition": "mTLS cert paths not set"
+      },
+      {
+        "id": "IT-009",
+        "name": "OIDC authentication",
+        "description": "OIDC/JWT bearer token authentication via Keycloak",
+        "build_tag": "integration",
+        "function": "TestIntegration_OIDCAuthentication",
+        "skip_condition": "Keycloak or OIDC config not available"
+      }
+    ]
+  },
+  "e2e_tests": {
+    "test_cases": [
+      {
+        "id": "E2E-001",
+        "name": "Full CRUD workflow",
+        "description": "Complete create → read → update → verify → delete → verify journey",
+        "build_tag": "e2e",
+        "function": "TestE2E_FullCRUDWorkflow"
+      },
+      {
+        "id": "E2E-002",
+        "name": "API key workflow",
+        "description": "Authenticate with API key → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_APIKeyWorkflow",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "E2E-003",
+        "name": "Basic auth workflow",
+        "description": "Authenticate with basic auth → CRUD operations → cleanup",
+        "build_tag": "e2e",
+        "function": "TestE2E_BasicAuthWorkflow",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "E2E-004",
+        "name": "Public endpoints always accessible",
+        "description": "Health, ready, metrics endpoints work without auth",
+        "build_tag": "e2e",
+        "function": "TestE2E_PublicEndpointsAlwaysAccessible"
+      },
+      {
+        "id": "E2E-005",
+        "name": "Unauthorized access denied",
+        "description": "All protected endpoints return 401 without credentials",
+        "build_tag": "e2e",
+        "function": "TestE2E_UnauthorizedAccessDenied",
+        "skip_condition": "No auth configured"
+      },
+      {
+        "id": "E2E-006",
+        "name": "Concurrent requests",
+        "description": "10 concurrent authenticated requests all succeed",
+        "build_tag": "e2e",
+        "function": "TestE2E_ConcurrentRequests"
+      },
+      {
+        "id": "E2E-007",
+        "name": "Graceful degradation",
+        "description": "Server handles invalid auth gracefully without crashing",
+        "build_tag": "e2e",
+        "function": "TestE2E_GracefulDegradation"
+      }
+    ]
+  },
+  "performance_tests": {
+    "test_cases": [
+      {
+        "id": "PERF-001",
+        "name": "Health endpoint baseline",
+        "description": "Baseline latency measurement for GET /health",
+        "build_tag": "performance",
+        "function": "BenchmarkHealthEndpoint"
+      },
+      {
+        "id": "PERF-002",
+        "name": "API key auth overhead",
+        "description": "Latency overhead of API key authentication",
+        "build_tag": "performance",
+        "function": "BenchmarkAPIKeyAuth",
+        "skip_condition": "INTEGRATION_API_KEY not set"
+      },
+      {
+        "id": "PERF-003",
+        "name": "Basic auth overhead",
+        "description": "Latency overhead of bcrypt-based basic authentication",
+        "build_tag": "performance",
+        "function": "BenchmarkBasicAuth",
+        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+      },
+      {
+        "id": "PERF-004",
+        "name": "CRUD create latency",
+        "description": "Latency measurement for POST /api/v1/items",
+        "build_tag": "performance",
+        "function": "BenchmarkCRUDCreate"
+      },
+      {
+        "id": "PERF-005",
+        "name": "CRUD read latency",
+        "description": "Latency measurement for GET /api/v1/items/{id}",
+        "build_tag": "performance",
+        "function": "BenchmarkCRUDRead"
+      },
+      {
+        "id": "PERF-006",
+        "name": "Concurrent requests throughput",
+        "description": "Throughput under varying concurrency levels (1, 5, 10, 25)",
+        "build_tag": "performance",
+        "function": "BenchmarkConcurrentRequests"
+      }
+    ]
+  },
   "test_data": {
     "valid_items": [
       {

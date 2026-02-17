@@ -1,6 +1,6 @@
 module github.com/vyrodovalexey/restapi-example
 
-go 1.25.5
+go 1.25.7
 
 require (
 	github.com/google/uuid v1.6.0
@@ -8,6 +8,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/prometheus/client_golang v1.20.5
 	go.uber.org/zap v1.27.0
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -20,6 +21,6 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/sys v0.22.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )

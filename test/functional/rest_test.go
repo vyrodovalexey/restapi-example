@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // testServer is a shared test server instance for REST API tests.
@@ -650,8 +652,6 @@ func TestFunctional_REST_013_HealthCheck(t *testing.T) {
 
 // TestFunctional_REST_014_ReadinessCheck tests the readiness check endpoint.
 // FT-REST-014: Readiness check (GET /ready -> 200, ready)
-// Note: The current implementation doesn't have a /ready endpoint.
-// This test documents the expected behavior if it were implemented.
 func TestFunctional_REST_014_ReadinessCheck(t *testing.T) {
 	LogTestStart(t, "FT-REST-014", "Readiness check")
 	defer LogTestEnd(t, "FT-REST-014")
@@ -664,14 +664,13 @@ func TestFunctional_REST_014_ReadinessCheck(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultRequestTimeout)
 	defer cancel()
 
-	// Act - Note: /ready endpoint may not exist in current implementation
-	// Using /health as a proxy for readiness
-	resp, err := client.Get(ctx, "/health", nil)
+	// Act
+	resp, err := client.Get(ctx, "/ready", nil)
 	if err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
 
-	// Assert - Using health endpoint as readiness indicator
+	// Assert
 	AssertStatusCode(t, resp, http.StatusOK)
 
 	apiResp, err := ParseAPIResponse(resp.Body)
@@ -681,8 +680,14 @@ func TestFunctional_REST_014_ReadinessCheck(t *testing.T) {
 
 	AssertSuccess(t, apiResp)
 
-	// Log that /ready endpoint is not implemented
-	t.Log("Note: /ready endpoint not implemented, using /health as readiness indicator")
+	ready, err := ParseReadyResponse(apiResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse ready response: %v", err)
+	}
+
+	if ready.Status != "ready" {
+		t.Errorf("Expected status 'ready', got %q", ready.Status)
+	}
 }
 
 // TestFunctional_REST_015_CRUDWorkflow tests the complete CRUD lifecycle.
@@ -992,4 +997,427 @@ func TestFunctional_REST_ContentTypeJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testAPIKey is the API key used in auth functional tests.
+const testAPIKey = "test-api-key-12345"
+
+// testAPIKeyConfig is the API key config string for test servers.
+const testAPIKeyConfig = testAPIKey + ":test-service"
+
+// testBasicUser is the username for basic auth tests.
+const testBasicUser = "testuser"
+
+// testBasicPassword is the password for basic auth tests.
+const testBasicPassword = "testpass123"
+
+// generateTestBasicAuthConfig creates a basic auth config string with
+// a bcrypt-hashed password for the test user.
+func generateTestBasicAuthConfig(t *testing.T) string {
+	t.Helper()
+	hash, err := bcrypt.GenerateFromPassword(
+		[]byte(testBasicPassword), bcrypt.MinCost,
+	)
+	if err != nil {
+		t.Fatalf("Failed to generate bcrypt hash: %v", err)
+	}
+	return testBasicUser + ":" + string(hash)
+}
+
+// TestReadyEndpoint tests the GET /ready endpoint.
+func TestReadyEndpoint(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-READY", "Ready endpoint")
+	defer LogTestEnd(t, "FT-AUTH-READY")
+
+	ts := NewTestServer(t)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Act
+	resp, err := client.Get(ctx, "/ready", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	// Assert
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	AssertSuccess(t, apiResp)
+
+	ready, err := ParseReadyResponse(apiResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse ready response: %v", err)
+	}
+
+	if ready.Status != "ready" {
+		t.Errorf("Expected status 'ready', got %q", ready.Status)
+	}
+}
+
+// TestAuthPublicEndpoints tests that public endpoints are accessible
+// without authentication even when auth is enabled.
+func TestAuthPublicEndpoints(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-001", "Public endpoints accessible without auth")
+	defer LogTestEnd(t, "FT-AUTH-001")
+
+	ts := NewTestServerWithAPIKeyAuth(t, testAPIKeyConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "health endpoint", path: "/health"},
+		{name: "ready endpoint", path: "/ready"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Act - no auth headers
+			resp, err := client.Get(ctx, tt.path, nil)
+			if err != nil {
+				t.Fatalf("Request to %s failed: %v", tt.path, err)
+			}
+
+			// Assert - should be accessible without auth
+			AssertStatusCode(t, resp, http.StatusOK)
+
+			apiResp, err := ParseAPIResponse(resp.Body)
+			if err != nil {
+				t.Fatalf("Failed to parse response: %v", err)
+			}
+			AssertSuccess(t, apiResp)
+		})
+	}
+}
+
+// TestAuthProtectedEndpointsRequireAuth tests that protected endpoints
+// return 401 without authentication.
+func TestAuthProtectedEndpointsRequireAuth(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-002", "Protected endpoints require auth")
+	defer LogTestEnd(t, "FT-AUTH-002")
+
+	ts := NewTestServerWithAPIKeyAuth(t, testAPIKeyConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Act - request without auth
+	resp, err := client.Get(ctx, "/api/v1/items", nil)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	// Assert - should return 401
+	AssertStatusCode(t, resp, http.StatusUnauthorized)
+}
+
+// TestAuthAPIKeyAccess tests that protected endpoints are accessible
+// with a valid API key.
+func TestAuthAPIKeyAccess(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-003", "API key access")
+	defer LogTestEnd(t, "FT-AUTH-003")
+
+	ts := NewTestServerWithAPIKeyAuth(t, testAPIKeyConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Act - request with valid API key
+	headers := APIKeyHeaders(testAPIKey)
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	// Assert - should be accessible
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	AssertSuccess(t, apiResp)
+}
+
+// TestAuthBasicAccess tests that protected endpoints are accessible
+// with valid basic auth credentials.
+func TestAuthBasicAccess(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-004", "Basic auth access")
+	defer LogTestEnd(t, "FT-AUTH-004")
+
+	usersConfig := generateTestBasicAuthConfig(t)
+	ts := NewTestServerWithBasicAuth(t, usersConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	basicClient := NewBasicAuthClient(
+		t, ts.BaseURL, testBasicUser, testBasicPassword,
+	)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Act - request with valid basic auth
+	resp, err := basicClient.DoWithBasicAuth(ctx, Request{
+		Method: http.MethodGet,
+		Path:   "/api/v1/items",
+	})
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	// Assert - should be accessible
+	AssertStatusCode(t, resp, http.StatusOK)
+
+	apiResp, err := ParseAPIResponse(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	AssertSuccess(t, apiResp)
+}
+
+// TestAuthInvalidAPIKey tests that an invalid API key returns 401.
+func TestAuthInvalidAPIKey(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-005", "Invalid API key")
+	defer LogTestEnd(t, "FT-AUTH-005")
+
+	ts := NewTestServerWithAPIKeyAuth(t, testAPIKeyConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	// Act - request with invalid API key
+	headers := APIKeyHeaders("invalid-api-key-99999")
+	resp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+
+	// Assert - should return 401
+	AssertStatusCode(t, resp, http.StatusUnauthorized)
+}
+
+// TestAuthInvalidBasicAuth tests that wrong basic auth credentials
+// return 401.
+func TestAuthInvalidBasicAuth(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-006", "Invalid basic auth")
+	defer LogTestEnd(t, "FT-AUTH-006")
+
+	usersConfig := generateTestBasicAuthConfig(t)
+	ts := NewTestServerWithBasicAuth(t, usersConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout,
+	)
+	defer cancel()
+
+	tests := []struct {
+		name     string
+		username string
+		password string
+	}{
+		{
+			name:     "wrong password",
+			username: testBasicUser,
+			password: "wrongpassword",
+		},
+		{
+			name:     "unknown user",
+			username: "unknownuser",
+			password: testBasicPassword,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			basicClient := NewBasicAuthClient(
+				t, ts.BaseURL, tt.username, tt.password,
+			)
+
+			// Act
+			resp, err := basicClient.DoWithBasicAuth(ctx, Request{
+				Method: http.MethodGet,
+				Path:   "/api/v1/items",
+			})
+			if err != nil {
+				t.Fatalf("Request failed: %v", err)
+			}
+
+			// Assert
+			AssertStatusCode(t, resp, http.StatusUnauthorized)
+		})
+	}
+}
+
+// TestAuthCRUDWithAPIKey tests the full CRUD workflow with API key
+// authentication.
+func TestAuthCRUDWithAPIKey(t *testing.T) {
+	LogTestStart(t, "FT-AUTH-007", "CRUD with API key auth")
+	defer LogTestEnd(t, "FT-AUTH-007")
+
+	ts := NewTestServerWithAPIKeyAuth(t, testAPIKeyConfig)
+	ts.Start()
+	defer ts.Stop()
+
+	client := NewHTTPClient(t, ts.BaseURL)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), DefaultRequestTimeout*2,
+	)
+	defer cancel()
+
+	headers := APIKeyHeaders(testAPIKey)
+
+	// Step 1: Create
+	t.Log("Step 1: Create item with API key")
+	createReq := CreateItemRequest{
+		Name:        "Auth CRUD Test Item",
+		Description: "Item for auth CRUD workflow test",
+		Price:       49.99,
+	}
+
+	createResp, err := client.Post(
+		ctx, "/api/v1/items", createReq, headers,
+	)
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	AssertStatusCode(t, createResp, http.StatusCreated)
+
+	createAPIResp, err := ParseAPIResponse(createResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse create response: %v", err)
+	}
+	AssertSuccess(t, createAPIResp)
+
+	createdItem, err := ParseItem(createAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse created item: %v", err)
+	}
+
+	itemID := createdItem.ID
+	t.Logf("Created item with ID: %s", itemID)
+
+	// Step 2: Read
+	t.Log("Step 2: Read item with API key")
+	readResp, err := client.Get(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+	AssertStatusCode(t, readResp, http.StatusOK)
+
+	readAPIResp, err := ParseAPIResponse(readResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse read response: %v", err)
+	}
+	AssertSuccess(t, readAPIResp)
+
+	readItem, err := ParseItem(readAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse read item: %v", err)
+	}
+	if readItem.Name != createReq.Name {
+		t.Errorf(
+			"Read item name mismatch: expected %q, got %q",
+			createReq.Name, readItem.Name,
+		)
+	}
+
+	// Step 3: Update
+	t.Log("Step 3: Update item with API key")
+	updateReq := UpdateItemRequest{
+		Name:        "Updated Auth CRUD Item",
+		Description: "Updated description",
+		Price:       59.99,
+	}
+
+	updateResp, err := client.Put(
+		ctx, "/api/v1/items/"+itemID, updateReq, headers,
+	)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	AssertStatusCode(t, updateResp, http.StatusOK)
+
+	// Step 4: List
+	t.Log("Step 4: List items with API key")
+	listResp, err := client.Get(ctx, "/api/v1/items", headers)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	AssertStatusCode(t, listResp, http.StatusOK)
+
+	listAPIResp, err := ParseAPIResponse(listResp.Body)
+	if err != nil {
+		t.Fatalf("Failed to parse list response: %v", err)
+	}
+	AssertSuccess(t, listAPIResp)
+
+	items, err := ParseItems(listAPIResp.Data)
+	if err != nil {
+		t.Fatalf("Failed to parse items: %v", err)
+	}
+	if len(items) != 1 {
+		t.Errorf("Expected 1 item, got %d", len(items))
+	}
+
+	// Step 5: Delete
+	t.Log("Step 5: Delete item with API key")
+	deleteResp, err := client.Delete(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+	AssertStatusCode(t, deleteResp, http.StatusNoContent)
+
+	// Step 6: Verify deletion
+	t.Log("Step 6: Verify deletion with API key")
+	verifyResp, err := client.Get(
+		ctx, "/api/v1/items/"+itemID, headers,
+	)
+	if err != nil {
+		t.Fatalf("Verify delete failed: %v", err)
+	}
+	AssertStatusCode(t, verifyResp, http.StatusNotFound)
+
+	t.Log("Auth CRUD workflow completed successfully")
 }

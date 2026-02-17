@@ -28,7 +28,7 @@ func TestNew(t *testing.T) {
 	itemStore := store.NewMemoryStore()
 
 	// Act
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Assert
 	if server == nil {
@@ -63,7 +63,7 @@ func TestNew_MetricsDisabled(t *testing.T) {
 	itemStore := store.NewMemoryStore()
 
 	// Act
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Assert
 	if server == nil {
@@ -92,7 +92,7 @@ func TestNew_MetricsEnabled(t *testing.T) {
 	itemStore := store.NewMemoryStore()
 
 	// Act
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Assert
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -114,7 +114,7 @@ func TestServer_Router(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Act
 	router := server.Router()
@@ -138,7 +138,7 @@ func TestServer_HealthEndpoint(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rr := httptest.NewRecorder()
@@ -171,7 +171,7 @@ func TestServer_RESTEndpoints(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	tests := []struct {
 		name       string
@@ -219,7 +219,7 @@ func TestServer_WebSocketEndpoint(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Test that WebSocket endpoint is registered
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
@@ -244,7 +244,7 @@ func TestServer_Shutdown(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Start server in background
 	go func() {
@@ -276,7 +276,7 @@ func TestServer_ShutdownWithTimeout(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Start server in background
 	go func() {
@@ -308,7 +308,7 @@ func TestServer_HTTPServerConfiguration(t *testing.T) {
 	itemStore := store.NewMemoryStore()
 
 	// Act
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Assert
 	if server.httpServer.Addr != ":8080" {
@@ -341,7 +341,7 @@ func TestServer_MiddlewareApplied(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
@@ -372,7 +372,7 @@ func TestServer_CORSPreflight(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/items", nil)
 	req.Header.Set("Origin", "http://localhost:3000")
@@ -401,7 +401,7 @@ func TestServer_RecoveryMiddleware(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	// Make multiple requests to ensure stability
 	for i := 0; i < 10; i++ {
@@ -428,7 +428,7 @@ func TestServer_ContentType(t *testing.T) {
 	}
 	logger := zap.NewNop()
 	itemStore := store.NewMemoryStore()
-	server := New(cfg, logger, itemStore)
+	server := New(cfg, logger, itemStore, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rr := httptest.NewRecorder()
@@ -467,7 +467,7 @@ func TestServer_DifferentPorts(t *testing.T) {
 			itemStore := store.NewMemoryStore()
 
 			// Act
-			server := New(cfg, logger, itemStore)
+			server := New(cfg, logger, itemStore, nil)
 
 			// Assert
 			if server.httpServer.Addr != tt.want {

@@ -19,6 +19,11 @@ type HealthResponse struct {
 	Version string `json:"version"`
 }
 
+// ReadyResponse represents the readiness check response.
+type ReadyResponse struct {
+	Status string `json:"status"`
+}
+
 // WriteJSON is a helper interface for handlers that write JSON responses.
 type JSONWriter interface {
 	WriteJSON(w http.ResponseWriter, status int, data any)

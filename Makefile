@@ -111,8 +111,47 @@ test-functional-coverage: ## Run functional tests with coverage
 	@echo "==> Running functional tests with coverage..."
 	$(GO) test -race -coverprofile=coverage-functional.out -covermode=atomic -tags=functional ./test/functional/...
 
+.PHONY: test-integration
+test-integration: ## Run integration tests (requires docker-compose)
+	@echo "==> Running integration tests..."
+	$(GO) test -race -v -tags=integration ./test/integration/...
+
+.PHONY: test-e2e
+test-e2e: ## Run end-to-end tests (requires docker-compose)
+	@echo "==> Running end-to-end tests..."
+	$(GO) test -race -v -tags=e2e ./test/e2e/...
+
+.PHONY: test-performance
+test-performance: ## Run performance/benchmark tests
+	@echo "==> Running performance tests..."
+	$(GO) test -bench=. -benchmem -tags=performance ./test/performance/...
+
+.PHONY: test-all-coverage
+test-all-coverage: ## Run all tests with combined coverage
+	@echo "==> Running all tests with coverage..."
+	$(GO) test -race -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...
+	$(GO) tool cover -func=$(COVERAGE_FILE)
+
 .PHONY: test-all
 test-all: test test-functional ## Run all tests (unit + functional)
+
+# ==============================================================================
+# Test environment targets (docker-compose)
+# ==============================================================================
+
+.PHONY: test-env-up
+test-env-up: ## Start test environment (docker-compose)
+	@echo "==> Starting test environment..."
+	docker-compose -f test/docker-compose/docker-compose.yml up -d
+
+.PHONY: test-env-down
+test-env-down: ## Stop test environment
+	@echo "==> Stopping test environment..."
+	docker-compose -f test/docker-compose/docker-compose.yml down -v
+
+.PHONY: test-env-logs
+test-env-logs: ## Show test environment logs
+	docker-compose -f test/docker-compose/docker-compose.yml logs -f
 
 # ==============================================================================
 # Code quality targets
@@ -215,7 +254,7 @@ clean: ## Clean build artifacts
 	@echo "==> Cleaning build artifacts..."
 	rm -rf $(BINARY_DIR)
 	rm -f $(COVERAGE_FILE) $(COVERAGE_HTML)
-	rm -f coverage-functional.out
+	rm -f coverage-functional.out coverage-integration.out
 	$(GO) clean -cache -testcache
 
 .PHONY: clean-docker

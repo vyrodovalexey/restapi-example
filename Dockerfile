@@ -67,14 +67,18 @@ WORKDIR /app
 # Copy binary from builder
 COPY --from=builder /build/bin/server /app/server
 
+# Create directory for TLS certificate mounting
+RUN mkdir -p /certs && chown appuser:appgroup /certs
+
 # Change ownership to non-root user
 RUN chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose port
+# Expose ports (HTTP and HTTPS/TLS)
 EXPOSE 8080
+EXPOSE 8443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

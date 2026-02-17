@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
+	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/config"
 	"github.com/vyrodovalexey/restapi-example/internal/server"
 	"github.com/vyrodovalexey/restapi-example/internal/store"
@@ -43,13 +45,21 @@ func run() int {
 		zap.String("log_level", cfg.LogLevel),
 		zap.Duration("shutdown_timeout", cfg.ShutdownTimeout),
 		zap.Bool("metrics_enabled", cfg.MetricsEnabled),
+		zap.String("auth_mode", cfg.AuthMode),
+		zap.Bool("tls_enabled", cfg.TLSEnabled),
 	)
+
+	// Create authenticator based on config
+	authenticator, err := createAuthenticator(cfg, logger)
+	if err != nil {
+		logger.Fatal("failed to create authenticator", zap.Error(err))
+	}
 
 	// Create memory store
 	itemStore := store.NewMemoryStore()
 
-	// Create and start server
-	srv := server.New(cfg, logger, itemStore)
+	// Create and start server (pass authenticator)
+	srv := server.New(cfg, logger, itemStore, authenticator)
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)
@@ -117,4 +127,84 @@ func initLogger(level string) (*zap.Logger, error) {
 	}
 
 	return zapConfig.Build()
+}
+
+// createAuthenticator creates an authenticator based on the config auth mode.
+func createAuthenticator(
+	cfg *config.Config,
+	logger *zap.Logger,
+) (auth.Authenticator, error) {
+	switch cfg.AuthMode {
+	case "none", "":
+		logger.Info("authentication disabled")
+		return nil, nil
+	case "mtls":
+		logger.Info("authentication mode: mTLS")
+		return auth.NewMTLSAuthenticator(), nil
+	case "basic":
+		logger.Info("authentication mode: basic auth")
+		return auth.NewBasicAuthenticator(cfg.BasicAuthUsers)
+	case "apikey":
+		logger.Info("authentication mode: API key")
+		return auth.NewAPIKeyAuthenticator(cfg.APIKeys)
+	case "oidc":
+		logger.Info("authentication mode: OIDC",
+			zap.String("issuer_url", cfg.OIDCIssuerURL),
+			zap.String("client_id", cfg.OIDCClientID),
+		)
+		return nil, fmt.Errorf(
+			"OIDC authenticator requires token verifier setup",
+		)
+	case "multi":
+		logger.Info("authentication mode: multi")
+		return createMultiAuthenticator(cfg, logger)
+	default:
+		return nil, fmt.Errorf("unknown auth mode: %s", cfg.AuthMode)
+	}
+}
+
+// createMultiAuthenticator creates a multi-method authenticator
+// from the available auth configurations.
+func createMultiAuthenticator(
+	cfg *config.Config,
+	logger *zap.Logger,
+) (auth.Authenticator, error) {
+	var authenticators []auth.Authenticator
+
+	if cfg.TLSEnabled && cfg.TLSClientAuth == "require" {
+		authenticators = append(
+			authenticators, auth.NewMTLSAuthenticator(),
+		)
+		logger.Info("multi-auth: mTLS enabled")
+	}
+
+	if cfg.BasicAuthUsers != "" {
+		ba, err := auth.NewBasicAuthenticator(cfg.BasicAuthUsers)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"creating basic authenticator: %w", err,
+			)
+		}
+		authenticators = append(authenticators, ba)
+		logger.Info("multi-auth: basic auth enabled")
+	}
+
+	if cfg.APIKeys != "" {
+		ak, err := auth.NewAPIKeyAuthenticator(cfg.APIKeys)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"creating API key authenticator: %w", err,
+			)
+		}
+		authenticators = append(authenticators, ak)
+		logger.Info("multi-auth: API key auth enabled")
+	}
+
+	if len(authenticators) == 0 {
+		return nil, fmt.Errorf(
+			"multi auth mode requires at least one authenticator",
+		)
+	}
+
+	return auth.NewMultiAuthenticator(authenticators...), nil
 }

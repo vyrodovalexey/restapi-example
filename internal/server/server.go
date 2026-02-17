@@ -3,15 +3,19 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
+	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/config"
 	"github.com/vyrodovalexey/restapi-example/internal/handler"
 	"github.com/vyrodovalexey/restapi-example/internal/middleware"
@@ -20,21 +24,29 @@ import (
 
 // Server represents the HTTP server.
 type Server struct {
-	httpServer *http.Server
-	router     *mux.Router
-	config     *config.Config
-	logger     *zap.Logger
-	wsHandler  *handler.WebSocketHandler
+	httpServer    *http.Server
+	router        *mux.Router
+	config        *config.Config
+	logger        *zap.Logger
+	wsHandler     *handler.WebSocketHandler
+	authenticator auth.Authenticator
 }
 
 // New creates a new Server instance.
-func New(cfg *config.Config, logger *zap.Logger, itemStore store.Store) *Server {
+// The authenticator parameter is optional; pass nil for no authentication.
+func New(
+	cfg *config.Config,
+	logger *zap.Logger,
+	itemStore store.Store,
+	authenticator auth.Authenticator,
+) *Server {
 	router := mux.NewRouter()
 
 	s := &Server{
-		router: router,
-		config: cfg,
-		logger: logger,
+		router:        router,
+		config:        cfg,
+		logger:        logger,
+		authenticator: authenticator,
 	}
 
 	s.setupMiddleware()
@@ -58,6 +70,7 @@ func (s *Server) setupMiddleware() {
 		"Content-Type",
 		"Authorization",
 		middleware.RequestIDHeader,
+		"X-API-Key",
 	}
 
 	// Apply middleware in order (first applied = outermost)
@@ -69,8 +82,17 @@ func (s *Server) setupMiddleware() {
 		s.router.Use(mux.MiddlewareFunc(middleware.Metrics()))
 	}
 
+	// Add auth middleware if authenticator is provided
+	if s.authenticator != nil {
+		s.router.Use(mux.MiddlewareFunc(
+			middleware.Auth(s.authenticator, s.logger),
+		))
+	}
+
 	s.router.Use(mux.MiddlewareFunc(middleware.Logging(s.logger)))
-	s.router.Use(mux.MiddlewareFunc(middleware.CORS(allowedOrigins, allowedMethods, allowedHeaders)))
+	s.router.Use(mux.MiddlewareFunc(
+		middleware.CORS(allowedOrigins, allowedMethods, allowedHeaders),
+	))
 }
 
 // setupRoutes configures the API routes.
@@ -100,17 +122,73 @@ func (s *Server) setupHTTPServer() {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
+
+	if s.config.TLSEnabled {
+		tlsConfig, err := s.buildTLSConfig()
+		if err != nil {
+			s.logger.Fatal("failed to build TLS config", zap.Error(err))
+		}
+		s.httpServer.TLSConfig = tlsConfig
+	}
+}
+
+// buildTLSConfig creates a TLS configuration from the server config.
+func (s *Server) buildTLSConfig() (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(
+		s.config.TLSCertPath, s.config.TLSKeyPath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("loading TLS key pair: %w", err)
+	}
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+	}
+
+	switch s.config.TLSClientAuth {
+	case "require":
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	case "request":
+		tlsConfig.ClientAuth = tls.RequestClientCert
+	default:
+		tlsConfig.ClientAuth = tls.NoClientCert
+	}
+
+	if s.config.TLSCAPath != "" {
+		caCert, err := os.ReadFile(s.config.TLSCAPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading TLS CA cert: %w", err)
+		}
+		caPool := x509.NewCertPool()
+		caPool.AppendCertsFromPEM(caCert)
+		tlsConfig.ClientCAs = caPool
+	}
+
+	return tlsConfig, nil
 }
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
-	s.logger.Info("starting server",
-		zap.String("address", s.config.Address()),
-		zap.Bool("metrics_enabled", s.config.MetricsEnabled),
-	)
-
-	if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return fmt.Errorf("server listen and serve: %w", err)
+	if s.config.TLSEnabled {
+		s.logger.Info("starting server with TLS",
+			zap.String("address", s.config.Address()),
+			zap.String("client_auth", s.config.TLSClientAuth),
+		)
+		err := s.httpServer.ListenAndServeTLS(
+			s.config.TLSCertPath, s.config.TLSKeyPath,
+		)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server listen and serve TLS: %w", err)
+		}
+	} else {
+		s.logger.Info("starting server",
+			zap.String("address", s.config.Address()),
+		)
+		err := s.httpServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server listen and serve: %w", err)
+		}
 	}
 
 	return nil

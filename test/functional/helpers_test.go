@@ -19,6 +19,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/config"
 	"github.com/vyrodovalexey/restapi-example/internal/server"
 	"github.com/vyrodovalexey/restapi-example/internal/store"
@@ -135,7 +136,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	itemStore := store.NewMemoryStore()
 
 	// Create server
-	srv := server.New(cfg, logger, itemStore)
+	srv := server.New(cfg, logger, itemStore, nil)
 
 	ts := &TestServer{
 		Server:   srv,
@@ -483,4 +484,203 @@ func LogTestStart(t *testing.T, testID, testName string) {
 func LogTestEnd(t *testing.T, testID string) {
 	t.Helper()
 	t.Logf("Completed test %s", testID)
+}
+
+// ReadyResponseData represents a readiness check response.
+type ReadyResponseData struct {
+	Status string `json:"status"`
+}
+
+// ParseReadyResponse parses a ready response from API response data.
+func ParseReadyResponse(data json.RawMessage) (*ReadyResponseData, error) {
+	var ready ReadyResponseData
+	if err := json.Unmarshal(data, &ready); err != nil {
+		return nil, fmt.Errorf("failed to parse ready response: %w", err)
+	}
+	return &ready, nil
+}
+
+// NewTestServerWithAPIKeyAuth creates a test server with API key authentication.
+func NewTestServerWithAPIKeyAuth(
+	t *testing.T,
+	apiKeys string,
+) *TestServer {
+	t.Helper()
+
+	testCfg := LoadTestConfig()
+
+	// Find an available port
+	listener, err := net.Listen(
+		"tcp",
+		fmt.Sprintf("%s:%d", testCfg.Host, testCfg.Port),
+	)
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	cfg := &config.Config{
+		ServerPort:      port,
+		LogLevel:        testCfg.LogLevel,
+		ShutdownTimeout: DefaultShutdownTimeout,
+		MetricsEnabled:  testCfg.MetricsEnabled,
+		AuthMode:        "apikey",
+		APIKeys:         apiKeys,
+	}
+
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	authenticator, err := auth.NewAPIKeyAuthenticator(apiKeys)
+	if err != nil {
+		t.Fatalf("Failed to create API key authenticator: %v", err)
+	}
+
+	srv := server.New(cfg, logger, itemStore, authenticator)
+
+	ts := &TestServer{
+		Server:   srv,
+		Store:    itemStore,
+		BaseURL:  fmt.Sprintf("http://%s:%d", testCfg.Host, port),
+		WSURL:    fmt.Sprintf("ws://%s:%d", testCfg.Host, port),
+		Port:     port,
+		listener: listener,
+		t:        t,
+	}
+
+	return ts
+}
+
+// NewTestServerWithBasicAuth creates a test server with basic authentication.
+func NewTestServerWithBasicAuth(
+	t *testing.T,
+	usersConfig string,
+) *TestServer {
+	t.Helper()
+
+	testCfg := LoadTestConfig()
+
+	listener, err := net.Listen(
+		"tcp",
+		fmt.Sprintf("%s:%d", testCfg.Host, testCfg.Port),
+	)
+	if err != nil {
+		t.Fatalf("Failed to find available port: %v", err)
+	}
+
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	cfg := &config.Config{
+		ServerPort:      port,
+		LogLevel:        testCfg.LogLevel,
+		ShutdownTimeout: DefaultShutdownTimeout,
+		MetricsEnabled:  testCfg.MetricsEnabled,
+		AuthMode:        "basic",
+		BasicAuthUsers:  usersConfig,
+	}
+
+	logger := zap.NewNop()
+	itemStore := store.NewMemoryStore()
+
+	authenticator, err := auth.NewBasicAuthenticator(usersConfig)
+	if err != nil {
+		t.Fatalf("Failed to create basic authenticator: %v", err)
+	}
+
+	srv := server.New(cfg, logger, itemStore, authenticator)
+
+	ts := &TestServer{
+		Server:   srv,
+		Store:    itemStore,
+		BaseURL:  fmt.Sprintf("http://%s:%d", testCfg.Host, port),
+		WSURL:    fmt.Sprintf("ws://%s:%d", testCfg.Host, port),
+		Port:     port,
+		listener: listener,
+		t:        t,
+	}
+
+	return ts
+}
+
+// APIKeyHeaders returns headers with the given API key.
+func APIKeyHeaders(apiKey string) map[string]string {
+	return map[string]string{
+		auth.APIKeyHeader: apiKey,
+	}
+}
+
+// BasicAuthClient creates an HTTP client that sends Basic auth credentials.
+type BasicAuthClient struct {
+	*HTTPClient
+	username string
+	password string
+}
+
+// NewBasicAuthClient creates a new HTTP client with Basic auth.
+func NewBasicAuthClient(
+	t *testing.T,
+	baseURL, username, password string,
+) *BasicAuthClient {
+	return &BasicAuthClient{
+		HTTPClient: NewHTTPClient(t, baseURL),
+		username:   username,
+		password:   password,
+	}
+}
+
+// DoWithBasicAuth executes an HTTP request with Basic auth.
+func (c *BasicAuthClient) DoWithBasicAuth(
+	ctx context.Context,
+	req Request,
+) (*Response, error) {
+	var bodyReader io.Reader
+	if req.Body != nil {
+		switch v := req.Body.(type) {
+		case string:
+			bodyReader = bytes.NewBufferString(v)
+		case []byte:
+			bodyReader = bytes.NewBuffer(v)
+		default:
+			jsonBody, err := json.Marshal(req.Body)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal request body: %w", err)
+			}
+			bodyReader = bytes.NewBuffer(jsonBody)
+		}
+	}
+
+	httpReq, err := http.NewRequestWithContext(
+		ctx, req.Method, c.baseURL+req.Path, bodyReader,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.SetBasicAuth(c.username, c.password)
+
+	if req.Body != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+
+	for key, value := range req.Headers {
+		httpReq.Header.Set(key, value)
+	}
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return &Response{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+		Body:       body,
+	}, nil
 }

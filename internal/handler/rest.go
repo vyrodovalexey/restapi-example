@@ -32,6 +32,7 @@ func NewRESTHandler(s store.Store, logger *zap.Logger) *RESTHandler {
 // RegisterRoutes registers the REST API routes with the router.
 func (h *RESTHandler) RegisterRoutes(router *mux.Router) {
 	router.HandleFunc("/health", h.HealthCheck).Methods(http.MethodGet)
+	router.HandleFunc("/ready", h.ReadyCheck).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/items", h.ListItems).Methods(http.MethodGet)
 	router.HandleFunc("/api/v1/items", h.CreateItem).Methods(http.MethodPost)
 	router.HandleFunc("/api/v1/items/{id}", h.GetItem).Methods(http.MethodGet)
@@ -44,6 +45,14 @@ func (h *RESTHandler) HealthCheck(w http.ResponseWriter, _ *http.Request) {
 	response := HealthResponse{
 		Status:  "healthy",
 		Version: Version,
+	}
+	h.writeJSON(w, http.StatusOK, model.NewSuccessResponse(response))
+}
+
+// ReadyCheck handles GET /ready requests.
+func (h *RESTHandler) ReadyCheck(w http.ResponseWriter, _ *http.Request) {
+	response := ReadyResponse{
+		Status: "ready",
 	}
 	h.writeJSON(w, http.StatusOK, model.NewSuccessResponse(response))
 }

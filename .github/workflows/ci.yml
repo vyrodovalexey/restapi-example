@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.25.5'
-  GOLANGCI_LINT_VERSION: 'v2.7.2'
+  GO_VERSION: '1.25.7'
+  GOLANGCI_LINT_VERSION: 'v2.8.0'
   DOCKER_REGISTRY: ghcr.io
   DOCKER_IMAGE: ghcr.io/${{ github.repository }}
 
@@ -140,13 +140,73 @@ jobs:
           retention-days: 7
 
   # ===========================================================================
+  # Integration Tests (requires external services)
+  # ===========================================================================
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, govulncheck, unit-tests, functional-tests]
+    continue-on-error: true
+    permissions:
+      contents: read
+    services:
+      vault:
+        image: hashicorp/vault:1.15
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: test-root-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd="vault status"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      keycloak:
+        image: quay.io/keycloak/keycloak:23.0
+        env:
+          KEYCLOAK_ADMIN: admin
+          KEYCLOAK_ADMIN_PASSWORD: admin
+          KC_HTTP_PORT: 8180
+        ports:
+          - 8180:8180
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        env:
+          INTEGRATION_SERVER_URL: http://localhost:8080
+          INTEGRATION_KEYCLOAK_URL: http://localhost:8180
+          INTEGRATION_API_KEY: "test-key:test-service"
+        run: |
+          go test -race -v -coverprofile=coverage-integration.out -covermode=atomic -tags=integration -timeout=5m ./test/integration/... || true
+
+      - name: Upload integration coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-integration
+          path: coverage-integration.out
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ===========================================================================
   # Sequential Jobs: SonarCloud, Build, Docker
   # ===========================================================================
 
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
-    needs: [lint, govulncheck, unit-tests, functional-tests]
+    needs: [lint, govulncheck, unit-tests, functional-tests, integration-tests]
+    if: ${{ !cancelled() && needs.unit-tests.result == 'success' && needs.functional-tests.result == 'success' }}
     permissions:
       contents: read
     steps:
@@ -165,6 +225,21 @@ jobs:
         with:
           name: coverage-functional
 
+      - name: Download integration coverage
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: coverage-integration
+
+      - name: Determine coverage paths
+        id: coverage
+        run: |
+          PATHS="coverage-unit.out,coverage-functional.out"
+          if [ -f coverage-integration.out ]; then
+            PATHS="${PATHS},coverage-integration.out"
+          fi
+          echo "paths=${PATHS}" >> $GITHUB_OUTPUT
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
         env:
@@ -174,7 +249,7 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
             -Dsonar.organization=${{ github.repository_owner }}
-            -Dsonar.go.coverage.reportPaths=coverage-unit.out,coverage-functional.out
+            -Dsonar.go.coverage.reportPaths=${{ steps.coverage.outputs.paths }}
             -Dsonar.sources=.
             -Dsonar.exclusions=**/*_test.go,**/vendor/**,**/test/**
             -Dsonar.tests=.
