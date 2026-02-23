@@ -5,6 +5,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 ## Features
 
 - **RESTful API** - Full CRUD operations for item management
+- **GraphQL API** - Full CRUD operations with GraphiQL playground
 - **WebSocket Support** - Real-time communication with automatic random value streaming
 - **Multiple Authentication Modes** - No auth, mTLS, OIDC, Basic Auth, API Key, and Multi-mode support
 - **TLS/mTLS Support** - Secure communication with client certificate authentication
@@ -28,6 +29,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - [Authentication](#authentication)
 - [Configuration](#configuration)
 - [API Endpoints](#api-endpoints)
+- [GraphQL API](#graphql-api)
 - [Kubernetes Deployment](#kubernetes-deployment)
 - [Testing](#testing)
 - [Performance](#performance)
@@ -53,7 +55,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 ├── internal/
 │   ├── auth/                # Authentication interfaces and implementations
 │   ├── config/              # Configuration management
-│   ├── handler/             # HTTP and WebSocket handlers
+│   ├── handler/             # HTTP, GraphQL, and WebSocket handlers
 │   ├── middleware/          # HTTP middleware (auth, logging, metrics, CORS, etc.)
 │   ├── model/               # Data models and validation
 │   ├── server/              # HTTP server setup
@@ -62,7 +64,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 │   ├── cases/               # Test case definitions (JSON)
 │   ├── docker-compose/      # Docker Compose test environment
 │   ├── e2e/                 # End-to-end tests
-│   ├── functional/          # Functional tests (REST API + WebSocket + Auth)
+│   ├── functional/          # Functional tests (REST API + GraphQL + WebSocket + Auth)
 │   ├── integration/         # Integration tests (requires external services)
 │   └── performance/         # Performance benchmarks
 ├── Dockerfile               # Multi-stage Docker build
@@ -215,7 +217,7 @@ export APP_METRICS_ENABLED=true
 The API provides both public and protected endpoints:
 
 - **Public endpoints** (no authentication required): `/health`, `/ready`, `/metrics`
-- **Protected endpoints** (authentication required): `/api/v1/items/*`, `/ws`
+- **Protected endpoints** (authentication required): `/api/v1/items/*`, `/graphql`, `/ws`
 
 **Note:** Health, readiness, and metrics endpoints are also available on the dedicated probe port (9090 by default) without authentication or TLS, making them ideal for Docker health checks and Kubernetes probes.
 
@@ -460,6 +462,156 @@ ws.onclose = () => {
 
 ---
 
+## GraphQL API
+
+The GraphQL endpoint provides a flexible query interface for item management operations. It supports both queries and mutations with the same functionality as the REST API.
+
+### GraphiQL Playground
+
+Access the interactive GraphiQL playground by opening `/graphql` in your browser. The playground provides:
+- Schema exploration and documentation
+- Query/mutation editor with syntax highlighting
+- Auto-completion and validation
+- Real-time query execution
+
+```
+GET /graphql
+```
+
+**Note:** The GraphiQL interface is automatically served when accessing `/graphql` with a browser (via `Accept: text/html` header).
+
+### Schema
+
+The GraphQL schema exposes the following types and operations:
+
+```graphql
+type Item {
+  id: ID!
+  name: String!
+  description: String
+  price: Float!
+  createdAt: String!
+  updatedAt: String!
+}
+
+input CreateItemInput {
+  name: String!
+  description: String
+  price: Float!
+}
+
+input UpdateItemInput {
+  name: String!
+  description: String
+  price: Float!
+}
+
+type Query {
+  items: [Item!]!
+  item(id: ID!): Item
+}
+
+type Mutation {
+  createItem(input: CreateItemInput!): Item!
+  updateItem(id: ID!, input: UpdateItemInput!): Item!
+  deleteItem(id: ID!): Boolean!
+}
+```
+
+### Query Examples
+
+#### List All Items
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "{ items { id name description price createdAt updatedAt } }"
+  }'
+```
+
+#### Get Item by ID
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "query GetItem($id: ID!) { item(id: $id) { id name description price createdAt updatedAt } }",
+    "variables": { "id": "550e8400-e29b-41d4-a716-446655440000" }
+  }'
+```
+
+#### Create Item
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "mutation CreateItem($input: CreateItemInput!) { createItem(input: $input) { id name description price createdAt updatedAt } }",
+    "variables": {
+      "input": {
+        "name": "New GraphQL Item",
+        "description": "Created via GraphQL",
+        "price": 29.99
+      }
+    }
+  }'
+```
+
+#### Update Item
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "mutation UpdateItem($id: ID!, $input: UpdateItemInput!) { updateItem(id: $id, input: $input) { id name description price createdAt updatedAt } }",
+    "variables": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "input": {
+        "name": "Updated GraphQL Item",
+        "description": "Updated via GraphQL",
+        "price": 39.99
+      }
+    }
+  }'
+```
+
+#### Delete Item
+
+```bash
+curl -X POST http://localhost:8080/graphql \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "mutation DeleteItem($id: ID!) { deleteItem(id: $id) }",
+    "variables": { "id": "550e8400-e29b-41d4-a716-446655440000" }
+  }'
+```
+
+### Error Handling
+
+GraphQL always returns HTTP 200 status code. Errors are included in the response body under the `errors` array. Successful operations return data under the `data` field.
+
+**Example Error Response:**
+```json
+{
+  "data": null,
+  "errors": [
+    {
+      "message": "item not found",
+      "locations": [
+        {
+          "line": 1,
+          "column": 34
+        }
+      ],
+      "path": ["item"]
+    }
+  ]
+}
+```
+
+---
+
 ### Metrics Endpoint
 
 Prometheus metrics endpoint (when enabled).
@@ -636,7 +788,7 @@ The project includes comprehensive testing at multiple levels with dedicated tes
 
 ### Test Structure
 
-- **`test/functional/`** - Functional tests (REST API + WebSocket + Auth) - 13 test cases including multi-auth and OIDC
+- **`test/functional/`** - Functional tests (REST API + GraphQL + WebSocket + Auth) - 28 test cases including multi-auth and OIDC
 - **`test/integration/`** - Integration tests (requires external services) - includes OIDC password grant and multi-auth methods
 - **`test/e2e/`** - End-to-end tests - includes mTLS and OIDC workflows with Keycloak
 - **`test/performance/`** - Performance benchmarks - includes multi-auth and API key auth benchmarks
@@ -876,7 +1028,7 @@ The `internal/auth/` package provides a flexible authentication system:
 
 The application runs two HTTP servers:
 
-1. **Main Server** (port 8080) - Handles API requests with full middleware chain and authentication
+1. **Main Server** (port 8080) - Handles API requests with full middleware chain and authentication, and also serves the GraphQL endpoint
 2. **Probe Server** (port 9090) - Dedicated server for health checks, readiness probes, and metrics without authentication or TLS
 
 ### Middleware Chain
