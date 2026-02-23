@@ -319,6 +319,166 @@
         }
       ]
     },
+    "graphql": {
+      "test_cases": [
+        {
+          "id": "FT-GQL-001",
+          "name": "Query items - empty store",
+          "description": "GraphQL query { items } returns empty array when store is empty",
+          "function": "TestFunctional_GQL_001_QueryItemsEmpty",
+          "endpoint": "/graphql",
+          "query": "{ items { id name description price createdAt updatedAt } }",
+          "expected_status": 200,
+          "expected": "empty items array, no errors"
+        },
+        {
+          "id": "FT-GQL-002",
+          "name": "Query items - with data",
+          "description": "GraphQL query { items } returns all items after creating some",
+          "function": "TestFunctional_GQL_002_QueryItemsWithData",
+          "endpoint": "/graphql",
+          "query": "{ items { id name price } }",
+          "expected_status": 200,
+          "expected": "array with created items"
+        },
+        {
+          "id": "FT-GQL-003",
+          "name": "Query item by ID",
+          "description": "GraphQL query { item(id) } returns correct item with all fields",
+          "function": "TestFunctional_GQL_003_QueryItemByID",
+          "endpoint": "/graphql",
+          "query": "{ item(id: \"...\") { id name description price createdAt updatedAt } }",
+          "expected_status": 200,
+          "expected": "item with matching ID and fields"
+        },
+        {
+          "id": "FT-GQL-004",
+          "name": "Query item - not found",
+          "description": "GraphQL query { item(id) } for non-existent item returns error",
+          "function": "TestFunctional_GQL_004_QueryItemNotFound",
+          "endpoint": "/graphql",
+          "query": "{ item(id: \"non-existent-id\") { id name } }",
+          "expected_status": 200,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-GQL-005",
+          "name": "Create item - valid",
+          "description": "GraphQL mutation createItem with valid input returns created item",
+          "function": "TestFunctional_GQL_005_CreateItemValid",
+          "endpoint": "/graphql",
+          "mutation": "mutation { createItem(input: {name: \"...\", description: \"...\", price: 42.99}) { id name description price createdAt updatedAt } }",
+          "expected_status": 200,
+          "expected": "created item with ID, name, description, price, timestamps"
+        },
+        {
+          "id": "FT-GQL-006",
+          "name": "Create item - empty name",
+          "description": "GraphQL mutation createItem with empty name returns validation error",
+          "function": "TestFunctional_GQL_006_CreateItemEmptyName",
+          "endpoint": "/graphql",
+          "mutation": "mutation { createItem(input: {name: \"\", price: 10.00}) { id } }",
+          "expected_status": 200,
+          "expected_error": "validation error: name cannot be empty"
+        },
+        {
+          "id": "FT-GQL-007",
+          "name": "Create item - negative price",
+          "description": "GraphQL mutation createItem with negative price returns validation error",
+          "function": "TestFunctional_GQL_007_CreateItemNegativePrice",
+          "endpoint": "/graphql",
+          "mutation": "mutation { createItem(input: {name: \"Test\", price: -10.00}) { id } }",
+          "expected_status": 200,
+          "expected_error": "validation error: price cannot be negative"
+        },
+        {
+          "id": "FT-GQL-008",
+          "name": "Update item - valid",
+          "description": "GraphQL mutation updateItem with valid input returns updated item",
+          "function": "TestFunctional_GQL_008_UpdateItemValid",
+          "endpoint": "/graphql",
+          "mutation": "mutation { updateItem(id: \"...\", input: {name: \"Updated\", price: 35.00}) { id name description price } }",
+          "expected_status": 200,
+          "expected": "updated item with new values"
+        },
+        {
+          "id": "FT-GQL-009",
+          "name": "Update item - not found",
+          "description": "GraphQL mutation updateItem for non-existent item returns error",
+          "function": "TestFunctional_GQL_009_UpdateItemNotFound",
+          "endpoint": "/graphql",
+          "mutation": "mutation { updateItem(id: \"non-existent\", input: {name: \"Test\", price: 10.00}) { id } }",
+          "expected_status": 200,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-GQL-010",
+          "name": "Delete item - valid",
+          "description": "GraphQL mutation deleteItem for existing item returns true",
+          "function": "TestFunctional_GQL_010_DeleteItemValid",
+          "endpoint": "/graphql",
+          "mutation": "mutation { deleteItem(id: \"...\") }",
+          "expected_status": 200,
+          "expected": "deleteItem returns true"
+        },
+        {
+          "id": "FT-GQL-011",
+          "name": "Delete item - not found",
+          "description": "GraphQL mutation deleteItem for non-existent item returns error",
+          "function": "TestFunctional_GQL_011_DeleteItemNotFound",
+          "endpoint": "/graphql",
+          "mutation": "mutation { deleteItem(id: \"non-existent\") }",
+          "expected_status": 200,
+          "expected_error": "item not found"
+        },
+        {
+          "id": "FT-GQL-012",
+          "name": "CRUD workflow via GraphQL",
+          "description": "Complete CRUD lifecycle via GraphQL: create, query, update, verify, delete, verify deletion",
+          "function": "TestFunctional_GQL_012_CRUDWorkflow",
+          "endpoint": "/graphql",
+          "workflow": [
+            {"action": "create", "operation": "mutation createItem"},
+            {"action": "query_by_id", "operation": "query item(id)"},
+            {"action": "update", "operation": "mutation updateItem"},
+            {"action": "verify_update", "operation": "query item(id)"},
+            {"action": "delete", "operation": "mutation deleteItem"},
+            {"action": "verify_delete", "operation": "query item(id)"}
+          ]
+        },
+        {
+          "id": "FT-GQL-013",
+          "name": "GraphiQL playground",
+          "description": "GET /graphql with Accept: text/html returns GraphiQL HTML page",
+          "function": "TestFunctional_GQL_013_GraphiQLPlayground",
+          "endpoint": "/graphql",
+          "method": "GET",
+          "headers": {"Accept": "text/html"},
+          "expected_status": 200,
+          "expected": "HTML page containing GraphiQL"
+        },
+        {
+          "id": "FT-GQL-014",
+          "name": "GraphQL with API key auth",
+          "description": "GraphQL endpoint works with API key authentication",
+          "function": "TestFunctional_GQL_014_WithAPIKeyAuth",
+          "endpoint": "/graphql",
+          "auth_mode": "apikey",
+          "expected_status": 200,
+          "expected": "successful GraphQL query with API key"
+        },
+        {
+          "id": "FT-GQL-015",
+          "name": "GraphQL without auth returns 401",
+          "description": "GraphQL endpoint requires authentication when auth is enabled",
+          "function": "TestFunctional_GQL_015_WithoutAuthReturns401",
+          "endpoint": "/graphql",
+          "auth_mode": "apikey",
+          "expected_status": 401,
+          "expected": "401 Unauthorized without credentials"
+        }
+      ]
+    },
     "websocket": {
       "test_cases": [
         {

@@ -107,6 +107,10 @@ func (s *Server) setupRoutes(itemStore store.Store) {
 	restHandler := handler.NewRESTHandler(itemStore, s.logger)
 	restHandler.RegisterRoutes(s.router)
 
+	// GraphQL handler
+	graphqlHandler := handler.NewGraphQLHandler(itemStore, s.logger)
+	graphqlHandler.RegisterRoutes(s.router)
+
 	// WebSocket handler
 	s.wsHandler = handler.NewWebSocketHandler(s.logger)
 	s.wsHandler.RegisterRoutes(s.router)
