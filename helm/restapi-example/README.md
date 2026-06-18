@@ -86,6 +86,7 @@ See [values.yaml](values.yaml) for the complete list of configurable parameters.
 | `config.logLevel` | Log level (debug, info, warn, error) | `info` |
 | `config.metricsEnabled` | Enable Prometheus metrics | `true` |
 | `config.shutdownTimeout` | Graceful shutdown timeout | `30s` |
+| `config.otlpEndpoint` | OTLP endpoint for OpenTelemetry trace export (maps to `APP_OTLP_ENDPOINT`; empty disables tracing) | `""` |
 
 ### Authentication Configuration
 
@@ -417,10 +418,33 @@ serviceMonitor:
     release: prometheus  # Match your Prometheus operator labels
 ```
 
+The ServiceMonitor scrapes the `/metrics` path on the dedicated probe port, where the full metric set is exposed without authentication or TLS.
+
 Available metrics:
-- `http_requests_total` - Total HTTP requests
-- `http_request_duration_seconds` - Request duration histogram
+- `http_requests_total` - Total HTTP requests by `method`, `path`, `status`
+- `http_request_duration_seconds` - Request duration histogram by `method`, `path`
 - `http_requests_in_flight` - Current requests being processed
+- `http_response_size_bytes` - HTTP response body size histogram by `method`, `path`
+- `auth_attempts_total` - Authentication attempts by `method` and `result`
+- `websocket_active_connections` - Currently active WebSocket connections
+- `store_operations_total` - Store operations by `operation` and `result`
+- `store_operation_duration_seconds` - Store operation latency histogram by `operation`
+- `panics_recovered_total` - Panics recovered by the Recovery middleware
+- `build_info` - Build metadata (`version`, `commit`, `build_time`) of the running binary
+- `go_*` / `process_*` - Go runtime and process collectors
+
+### OpenTelemetry Tracing (OTLP)
+
+The application supports OpenTelemetry trace export, gated by the `APP_OTLP_ENDPOINT` environment variable. Configure it through `config.otlpEndpoint`:
+
+```yaml
+config:
+  otlpEndpoint: "otel-collector.observability:4317"  # gRPC
+  # or an HTTP endpoint:
+  # otlpEndpoint: "http://otel-collector.observability:4318"
+```
+
+When `config.otlpEndpoint` is set, the value is rendered into the ConfigMap as `APP_OTLP_ENDPOINT` and spans are exported to the collector. The transport is chosen from the scheme (`http(s)://` selects OTLP/HTTP, otherwise OTLP/gRPC). When empty (the default), a no-op tracer is used and no spans are exported.
 
 ### Health Checks
 

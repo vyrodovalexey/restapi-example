@@ -1,0 +1,94 @@
+# =============================================================================
+# Yandex Tank load configuration for restapi-example
+# =============================================================================
+#
+# This is the modern Yandex Tank YAML config (load.yaml). It drives the HTTP
+# (phantom) load generator against the REST endpoints of the server.
+#
+# -----------------------------------------------------------------------------
+# PARAMETERIZATION (edit before running)
+# -----------------------------------------------------------------------------
+#   phantom.address   : target host:port of the running server.
+#                        Default below assumes the server is reachable at
+#                        host.docker.internal:8080 (server started on the host,
+#                        Tank running inside Docker). If you run Tank natively,
+#                        change this to 127.0.0.1:8080. For TLS (:8443) set
+#                        `ssl: true` and use the TLS port.
+#   phantom.ammofile  : path to the request-style ammo (see ammo.txt).
+#   AUTH HEADER        : the ammo.txt requests carry `X-API-Key: <key>`.
+#                        Change the key in ammo.txt to match the server's
+#                        APP_API_KEYS configuration (default test key below).
+#
+# -----------------------------------------------------------------------------
+# HOW TO RUN
+# -----------------------------------------------------------------------------
+# Native (if `yandex-tank` is installed):
+#     cd test/performance
+#     yandex-tank -c load.yaml
+#
+# Docker (recommended; no local install required):
+#     docker run --rm -v "$(pwd)":/var/loadtest \
+#         -v "$HOME/.ssh":/root/.ssh \
+#         --net host \
+#         yandex/yandex-tank -c load.yaml
+#
+#   On macOS/Windows `--net host` is unavailable; use
+#   `phantom.address: host.docker.internal:8080` (as configured below) and drop
+#   `--net host`.
+#
+# NOTE: Running this load test requires the `yandex-tank` binary or the
+# `yandex/yandex-tank` Docker image. If neither is available the config is still
+# valid and documents the intended load profile; the Go benchmarks in
+# performance_test.go provide an in-process alternative that needs no external
+# tooling.
+# =============================================================================
+
+phantom:
+  enabled: true
+  # Target server. host.docker.internal resolves to the Docker host on
+  # macOS/Windows. Use 127.0.0.1:8080 when running Tank natively.
+  address: host.docker.internal:8080
+  # ssl: true   # uncomment and set address to host.docker.internal:8443 for TLS
+  ammofile: ammo.txt
+  # Load profile (steps): warm-up then ramp up to the target RPS.
+  #   line(start_rps, end_rps, duration) — linear ramp
+  #   const(rps, duration)               — sustained constant load
+  load_profile:
+    load_type: rps
+    schedule: |
+      line(10, 100, 60s)
+      const(100, 60s)
+      line(100, 500, 120s)
+      const(500, 120s)
+  # Treat any 5xx (or connection errors) distinctly in the report.
+  connection_test: true
+
+# -----------------------------------------------------------------------------
+# Autostop: safety conditions that abort the test early to avoid hammering an
+# already-degraded target.
+# -----------------------------------------------------------------------------
+autostop:
+  enabled: true
+  autostop:
+    # Abort if >5% of responses are HTTP 5xx over a 10s window.
+    - http(5xx,5%,10s)
+    # Abort if >10% of responses are HTTP 4xx over a 10s window
+    # (catches auth/config mistakes early, e.g. wrong X-API-Key).
+    - http(4xx,10%,10s)
+    # Abort if the 99th percentile response time exceeds 500ms for 15s.
+    - quantile(99,500,15s)
+    # Abort if there are network errors (timeouts/resets) above 1% for 10s.
+    - net(1xx,1%,10s)
+
+# -----------------------------------------------------------------------------
+# Console + report output. Artefacts (phout.txt etc.) land in the per-run
+# Tank working directory; summarise them into the repo's .yandextank/ folder.
+# -----------------------------------------------------------------------------
+console:
+  enabled: true
+
+telegraf:
+  enabled: false   # set true + configure to collect target host metrics.
+
+uploader:
+  enabled: false   # set true to upload to Overload/Lunapark if desired.

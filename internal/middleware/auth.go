@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/restapi-example/internal/auth"
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
 
 // publicPaths are paths that don't require authentication.
@@ -50,6 +51,9 @@ func Auth(
 
 			info, err := authenticator.Authenticate(r)
 			if err != nil {
+				observability.AuthAttemptsTotal.
+					WithLabelValues(string(authenticator.Method()), observability.ResultFailure).
+					Inc()
 				logger.Warn("authentication failed",
 					zap.String("path", r.URL.Path),
 					zap.String("method", r.Method),
@@ -59,6 +63,10 @@ func Auth(
 				writeAuthError(w, err)
 				return
 			}
+
+			observability.AuthAttemptsTotal.
+				WithLabelValues(string(info.Method), observability.ResultSuccess).
+				Inc()
 
 			logger.Debug("authentication successful",
 				zap.String("subject", info.Subject),

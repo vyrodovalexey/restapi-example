@@ -1,0 +1,44 @@
+137 health
+GET /health HTTP/1.1
+Host: host.docker.internal:8080
+User-Agent: yandex-tank
+X-API-Key: test-api-key-12345
+Connection: keep-alive
+
+
+143 list
+GET /api/v1/items HTTP/1.1
+Host: host.docker.internal:8080
+User-Agent: yandex-tank
+X-API-Key: test-api-key-12345
+Connection: keep-alive
+
+
+255 create
+POST /api/v1/items HTTP/1.1
+Host: host.docker.internal:8080
+User-Agent: yandex-tank
+X-API-Key: test-api-key-12345
+Connection: keep-alive
+Content-Type: application/json
+Content-Length: 59
+
+{"name":"Tank Item","description":"load test","price":9.99}
+143 list
+GET /api/v1/items HTTP/1.1
+Host: host.docker.internal:8080
+User-Agent: yandex-tank
+X-API-Key: test-api-key-12345
+Connection: keep-alive
+
+
+230 graphql
+POST /graphql HTTP/1.1
+Host: host.docker.internal:8080
+User-Agent: yandex-tank
+X-API-Key: test-api-key-12345
+Connection: keep-alive
+Content-Type: application/json
+Content-Length: 39
+
+{"query":"{ items { id name price } }"}

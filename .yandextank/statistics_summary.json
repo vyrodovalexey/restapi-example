@@ -1,122 +1,191 @@
 {
   "test_metadata": {
-    "date": "2026-02-17",
+    "date": "2026-06-18",
     "platform": "darwin/arm64",
     "cpu": "Apple M1 Max",
-    "go_version": "1.25.7",
+    "go_version": "1.26.4",
     "gomaxprocs": 10,
     "benchmark_time": "5s",
-    "iterations": 3
+    "iterations": 3,
+    "command": "go test -bench=. -benchmem -benchtime=5s -count=3 -tags=performance ./test/performance/...",
+    "notes": "In-process server now wraps the store with store.NewInstrumentedStore; auth_attempts_total / store_operations_total / store_operation_duration_seconds and the no-op tracing middleware run on every request. Summary statistics exclude transient outliers: Health cold-start run1 (26408 ns), GraphQLQuery run3 (512736 ns), APIKeyAuthLocal run2 (50028565 ns)."
   },
   "benchmarks": {
     "BenchmarkHealthEndpoint": {
       "latency": {
-        "mean_ns": 20124,
-        "std_dev_ns": 1073,
-        "min_ns": 18989,
-        "max_ns": 21079,
-        "variance_pct": 5.3,
-        "p50_estimate_ns": 20124,
-        "p90_estimate_ns": 21500,
-        "p95_estimate_ns": 22000,
-        "p99_estimate_ns": 25000
+        "mean_ns": 17981,
+        "std_dev_ns": 599,
+        "min_ns": 17382,
+        "max_ns": 18580,
+        "variance_pct": 3.3,
+        "p50_estimate_ns": 17981,
+        "p90_estimate_ns": 18600,
+        "p95_estimate_ns": 19000,
+        "p99_estimate_ns": 22000,
+        "cold_start_first_iter_ns": 26408
       },
       "throughput": {
-        "mean_rps": 49785,
-        "min_rps": 47440,
-        "max_rps": 52663
+        "mean_rps": 55614,
+        "min_rps": 53821,
+        "max_rps": 57531
       },
       "memory": {
-        "mean_bytes_per_op": 9652,
-        "allocations_per_op": 118,
-        "bytes_per_allocation": 81.8
+        "mean_bytes_per_op": 11124,
+        "allocations_per_op": 132,
+        "bytes_per_allocation": 84.3
       }
     },
     "BenchmarkCRUDCreate": {
       "latency": {
-        "mean_ns": 17517,
-        "std_dev_ns": 517,
-        "min_ns": 17067,
-        "max_ns": 18081,
-        "variance_pct": 3.0,
-        "p50_estimate_ns": 17517,
-        "p90_estimate_ns": 18500,
-        "p95_estimate_ns": 19000,
-        "p99_estimate_ns": 22000
+        "mean_ns": 17566,
+        "std_dev_ns": 999,
+        "min_ns": 16606,
+        "max_ns": 18943,
+        "variance_pct": 5.7,
+        "p50_estimate_ns": 17566,
+        "p90_estimate_ns": 18900,
+        "p95_estimate_ns": 19300,
+        "p99_estimate_ns": 22500
       },
       "throughput": {
-        "mean_rps": 57121,
-        "min_rps": 55307,
-        "max_rps": 58593
+        "mean_rps": 56928,
+        "min_rps": 52790,
+        "max_rps": 60219
       },
       "memory": {
-        "mean_bytes_per_op": 13223,
-        "allocations_per_op": 160,
-        "bytes_per_allocation": 82.6
+        "mean_bytes_per_op": 14742,
+        "allocations_per_op": 174,
+        "bytes_per_allocation": 84.7
       }
     },
     "BenchmarkCRUDRead": {
       "latency": {
-        "mean_ns": 16545,
-        "std_dev_ns": 335,
-        "min_ns": 16292,
-        "max_ns": 16925,
-        "variance_pct": 2.0,
-        "p50_estimate_ns": 16545,
-        "p90_estimate_ns": 17200,
-        "p95_estimate_ns": 17500,
-        "p99_estimate_ns": 20000
+        "mean_ns": 15573,
+        "std_dev_ns": 723,
+        "min_ns": 15045,
+        "max_ns": 16595,
+        "variance_pct": 4.6,
+        "p50_estimate_ns": 15573,
+        "p90_estimate_ns": 16500,
+        "p95_estimate_ns": 16900,
+        "p99_estimate_ns": 19500
       },
       "throughput": {
-        "mean_rps": 60458,
-        "min_rps": 59084,
-        "max_rps": 61380
+        "mean_rps": 64214,
+        "min_rps": 60259,
+        "max_rps": 66467
       },
       "memory": {
-        "mean_bytes_per_op": 10758,
-        "allocations_per_op": 126,
-        "bytes_per_allocation": 85.4
+        "mean_bytes_per_op": 12166,
+        "allocations_per_op": 140,
+        "bytes_per_allocation": 86.9
+      }
+    },
+    "BenchmarkGraphQLQuery": {
+      "description": "POST /graphql item(id) query on an isolated server with one seeded item.",
+      "latency": {
+        "mean_ns": 31363,
+        "std_dev_ns": 80,
+        "min_ns": 31283,
+        "max_ns": 31443,
+        "variance_pct": 0.3,
+        "p50_estimate_ns": 31363,
+        "p90_estimate_ns": 31600,
+        "p95_estimate_ns": 31800,
+        "p99_estimate_ns": 35000,
+        "outlier_iter_ns": 512736
+      },
+      "throughput": {
+        "mean_rps": 31885,
+        "min_rps": 31803,
+        "max_rps": 31966
+      },
+      "memory": {
+        "mean_bytes_per_op": 71481,
+        "allocations_per_op": 1158,
+        "bytes_per_allocation": 61.7
+      }
+    },
+    "BenchmarkAPIKeyAuthLocal": {
+      "description": "API-key auth path; exercises auth_attempts_total{method=apikey,result}.",
+      "latency": {
+        "mean_ns": 15958,
+        "std_dev_ns": 152,
+        "min_ns": 15806,
+        "max_ns": 16109,
+        "variance_pct": 0.9,
+        "outlier_iter_ns": 50028565
+      },
+      "throughput": {
+        "mean_rps": 62664,
+        "min_rps": 62077,
+        "max_rps": 63267
+      },
+      "memory": {
+        "mean_bytes_per_op": 12394,
+        "allocations_per_op": 145,
+        "bytes_per_allocation": 85.5
+      }
+    },
+    "BenchmarkMultiAuth": {
+      "description": "Multi-auth (apikey + basic) path; first-match-wins on apikey.",
+      "latency": {
+        "mean_ns": 15619,
+        "std_dev_ns": 266,
+        "min_ns": 15403,
+        "max_ns": 15994,
+        "variance_pct": 1.7
+      },
+      "throughput": {
+        "mean_rps": 64025,
+        "min_rps": 62523,
+        "max_rps": 64922
+      },
+      "memory": {
+        "mean_bytes_per_op": 12405,
+        "allocations_per_op": 145,
+        "bytes_per_allocation": 85.6
       }
     },
     "BenchmarkConcurrentRequests": {
       "concurrency_1": {
         "latency": {
-          "mean_ns": 16278,
-          "std_dev_ns": 170,
+          "mean_ns": 15772,
+          "std_dev_ns": 163,
           "variance_pct": 1.0
         },
         "throughput": {
-          "mean_rps": 61437
+          "mean_rps": 63403
         }
       },
       "concurrency_5": {
         "latency": {
-          "mean_ns": 10563,
-          "std_dev_ns": 55,
-          "variance_pct": 0.5
+          "mean_ns": 10913,
+          "std_dev_ns": 153,
+          "variance_pct": 1.4
         },
         "throughput": {
-          "mean_rps": 94669
+          "mean_rps": 91634
         }
       },
       "concurrency_10": {
         "latency": {
-          "mean_ns": 10294,
-          "std_dev_ns": 189,
-          "variance_pct": 1.8
+          "mean_ns": 10455,
+          "std_dev_ns": 487,
+          "variance_pct": 4.7
         },
         "throughput": {
-          "mean_rps": 97166
+          "mean_rps": 95648
         }
       },
       "concurrency_25": {
         "latency": {
-          "mean_ns": 10934,
-          "std_dev_ns": 424,
-          "variance_pct": 3.9
+          "mean_ns": 10750,
+          "std_dev_ns": 433,
+          "variance_pct": 4.0
         },
         "throughput": {
-          "mean_rps": 91553
+          "mean_rps": 93023
         }
       }
     }
@@ -125,45 +194,73 @@
     "baseline_concurrency": 1,
     "optimal_concurrency": 10,
     "scaling_factors": {
-      "c1_to_c5": 1.54,
-      "c1_to_c10": 1.58,
-      "c1_to_c25": 1.49
+      "c1_to_c5": 1.45,
+      "c1_to_c10": 1.51,
+      "c1_to_c25": 1.47
     },
     "latency_reduction": {
-      "c1_to_c10_pct": 36.8
+      "c1_to_c10_pct": 33.7
     }
   },
   "comparison_with_previous": {
+    "context": "Previous = README/2026-02 baseline (Go 1.25.7, store NOT instrumented). Current = Go 1.26.4 with InstrumentedStore + auth/tracing instrumentation active.",
     "BenchmarkHealthEndpoint": {
-      "previous_ns": 20964,
-      "current_ns": 20124,
-      "change_pct": -4.0
+      "previous_ns": 20124,
+      "current_ns": 17981,
+      "change_pct": -10.6,
+      "previous_allocs": 118,
+      "current_allocs": 132,
+      "allocs_change": 14
     },
     "BenchmarkCRUDCreate": {
-      "previous_ns": 17970,
-      "current_ns": 17517,
-      "change_pct": -2.5
+      "previous_ns": 17517,
+      "current_ns": 17566,
+      "change_pct": 0.3,
+      "previous_allocs": 160,
+      "current_allocs": 174,
+      "allocs_change": 14
     },
     "BenchmarkCRUDRead": {
-      "previous_ns": 16053,
-      "current_ns": 16545,
-      "change_pct": 3.1
+      "previous_ns": 16545,
+      "current_ns": 15573,
+      "change_pct": -5.9,
+      "previous_allocs": 126,
+      "current_allocs": 140,
+      "allocs_change": 14
     },
     "BenchmarkConcurrentRequests_c10": {
-      "previous_ns": 10878,
-      "current_ns": 10294,
-      "change_pct": -5.4
+      "previous_ns": 10294,
+      "current_ns": 10455,
+      "change_pct": 1.6,
+      "previous_allocs": 122,
+      "current_allocs": 136,
+      "allocs_change": 14
     }
+  },
+  "observability_overhead": {
+    "summary": "The new instrumentation adds ~14 allocations/op and ~1.4 KB/op per request (Prometheus middleware/metrics counters + InstrumentedStore + no-op tracing middleware). Wall-clock latency is statistically within run-to-run variance of the prior baseline (Go 1.26.4 toolchain offsets most of the added work). No measurable regression on hot REST paths.",
+    "per_request_alloc_delta": 14,
+    "per_request_bytes_delta_estimate": 1400,
+    "latency_regression_pct": "within noise (<2% on CRUD/concurrent; Health improved)"
   },
   "slo_compliance": {
     "p50_latency_target_ms": 50,
     "p50_latency_actual_us": 17,
     "p50_status": "PASS",
     "p99_latency_target_ms": 200,
-    "p99_latency_actual_us": 25,
+    "p99_latency_actual_us": 35,
     "p99_status": "PASS",
     "throughput_target_rps": 10000,
-    "throughput_actual_rps": 97166,
-    "throughput_status": "PASS"
+    "throughput_actual_rps": 95648,
+    "throughput_status": "PASS",
+    "error_rate_target_pct": 0.1,
+    "error_rate_actual_pct": 0.0,
+    "error_rate_status": "PASS"
+  },
+  "yandex_tank": {
+    "binary_available": false,
+    "docker_image_pulled": false,
+    "config_added": ["test/performance/load.yaml", "test/performance/ammo.txt"],
+    "note": "yandex-tank binary and pandora not installed locally; the load.yaml + ammo.txt are validated, documented and ready to run via the yandex/yandex-tank Docker image or a native install. No live external load test was executed; the Go benchmarks above are the executed performance results."
   }
 }

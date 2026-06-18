@@ -9,10 +9,27 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/restapi-example/internal/model"
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
+
+// waitForGauge polls the websocket_active_connections gauge until it reaches
+// want or the deadline elapses, returning the last observed value.
+func waitForGauge(want float64, timeout time.Duration) float64 {
+	deadline := time.Now().Add(timeout)
+	var got float64
+	for time.Now().Before(deadline) {
+		got = testutil.ToFloat64(observability.WebSocketActiveConnections)
+		if got == want {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return got
+}
 
 func TestNewWebSocketHandler(t *testing.T) {
 	// Arrange
@@ -315,6 +332,79 @@ func TestWebSocketHandler_HandleWebSocket_ClientSendsMessage(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Connection should still be open (no panic or crash)
+}
+
+func TestWebSocketHandler_ActiveConnectionsGauge(t *testing.T) {
+	// This test mutates the global websocket_active_connections gauge and must
+	// not run in parallel with other WS tests that affect it.
+	logger := zap.NewNop()
+	handler := NewWebSocketHandler(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
+	defer server.Close()
+
+	// Normalise the gauge to a known baseline.
+	observability.WebSocketActiveConnections.Set(0)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	// Act — connect one client; the gauge should rise to 1.
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+
+	if got := waitForGauge(1, 2*time.Second); got != 1 {
+		t.Errorf("websocket_active_connections after connect = %v, want 1", got)
+	}
+
+	// Close the client connection; the gauge should fall back to 0.
+	conn.Close()
+
+	if got := waitForGauge(0, 2*time.Second); got != 0 {
+		t.Errorf("websocket_active_connections after disconnect = %v, want 0", got)
+	}
+
+	handler.CloseAllConnections()
+}
+
+func TestWebSocketHandler_ActiveConnectionsGauge_CloseAll(t *testing.T) {
+	logger := zap.NewNop()
+	handler := NewWebSocketHandler(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(handler.HandleWebSocket))
+	defer server.Close()
+
+	observability.WebSocketActiveConnections.Set(0)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+
+	numClients := 3
+	conns := make([]*websocket.Conn, numClients)
+	for i := 0; i < numClients; i++ {
+		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			t.Fatalf("Failed to connect client %d: %v", i, err)
+		}
+		conns[i] = c
+	}
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+
+	if got := waitForGauge(float64(numClients), 2*time.Second); got != float64(numClients) {
+		t.Errorf("websocket_active_connections after %d connects = %v, want %d",
+			numClients, got, numClients)
+	}
+
+	// Act — CloseAllConnections should drive the gauge back to 0.
+	handler.CloseAllConnections()
+
+	if got := waitForGauge(0, 2*time.Second); got != 0 {
+		t.Errorf("websocket_active_connections after CloseAll = %v, want 0", got)
+	}
 }
 
 func TestGenerateSecureRandomInt(t *testing.T) {

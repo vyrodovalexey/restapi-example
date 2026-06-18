@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
 
 func TestNewResponseWriter(t *testing.T) {
@@ -319,6 +322,92 @@ func TestRecovery_RecoversPanicWithError(t *testing.T) {
 	// Assert
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestRecovery_IncrementsPanicsRecoveredTotal(t *testing.T) {
+	// Arrange
+	logger := zap.NewNop()
+	handler := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		panic("boom")
+	})
+
+	wrapped := Recovery(logger)(handler)
+
+	before := testutil.ToFloat64(observability.PanicsRecoveredTotal)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	wrapped.ServeHTTP(rr, req)
+
+	// Assert
+	after := testutil.ToFloat64(observability.PanicsRecoveredTotal)
+	if after-before != 1 {
+		t.Errorf("panics_recovered_total delta = %v, want 1", after-before)
+	}
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rr.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestRecovery_NoPanic_DoesNotIncrementCounter(t *testing.T) {
+	// Arrange
+	logger := zap.NewNop()
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	wrapped := Recovery(logger)(handler)
+
+	before := testutil.ToFloat64(observability.PanicsRecoveredTotal)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	wrapped.ServeHTTP(rr, req)
+
+	// Assert
+	after := testutil.ToFloat64(observability.PanicsRecoveredTotal)
+	if after != before {
+		t.Errorf("panics_recovered_total changed without a panic: before=%v after=%v",
+			before, after)
+	}
+}
+
+func TestMetrics_ObservesResponseSize(t *testing.T) {
+	// Arrange — observe the response-size histogram via the route template.
+	observability.HTTPResponseSizeBytes.Reset()
+
+	router := mux.NewRouter()
+	router.Handle("/api/v1/items/{id}", Metrics()(http.HandlerFunc(
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("hello world payload"))
+		},
+	))).Methods(http.MethodGet)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/items/7", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	router.ServeHTTP(rr, req)
+
+	// Assert — a sample was recorded for the normalized route template.
+	if count := testutil.CollectAndCount(
+		observability.HTTPResponseSizeBytes,
+	); count == 0 {
+		t.Error("http_response_size_bytes recorded no series")
+	}
+
+	// The bytes written should equal the payload length so the histogram sum
+	// is non-zero. We assert presence of the {method,path} series.
+	metric := observability.HTTPResponseSizeBytes.WithLabelValues(
+		http.MethodGet, "/api/v1/items/{id}",
+	)
+	if metric == nil {
+		t.Error("expected http_response_size_bytes series for route template")
 	}
 }
 

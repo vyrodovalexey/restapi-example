@@ -316,6 +316,97 @@
           "auth_mode": "multi",
           "auth_methods": ["apikey", "basic"],
           "workflow": ["create", "read", "update", "verify_update", "delete", "verify_delete"]
+        },
+        {
+          "id": "FT-AUTH-MTLS-1",
+          "name": "mTLS valid client cert",
+          "description": "AM-MTLS-1: in-process TLS server with client-auth=require backed by Vault-issued server cert; a valid Vault-issued client cert authenticates and drives REST list/create/read",
+          "function": "TestFunctional_AUTH_MTLS_ValidCert",
+          "auth_mode": "mtls",
+          "expected_status": 200,
+          "skip_condition": "Vault-issued mTLS certs not present"
+        },
+        {
+          "id": "FT-AUTH-MTLS-2",
+          "name": "mTLS no client cert rejected",
+          "description": "AM-MTLS-2: a client presenting no certificate is rejected at the TLS handshake (client-auth=require)",
+          "function": "TestFunctional_AUTH_MTLS_NoCert",
+          "auth_mode": "mtls",
+          "expected": "TLS handshake failure",
+          "skip_condition": "Vault-issued mTLS certs not present"
+        },
+        {
+          "id": "FT-AUTH-MTLS-3",
+          "name": "mTLS health reachable with cert",
+          "description": "Probe /health is reachable over the mTLS channel with a valid client cert",
+          "function": "TestFunctional_AUTH_MTLS_HealthWithCert",
+          "auth_mode": "mtls",
+          "expected_status": 200,
+          "skip_condition": "Vault-issued mTLS certs not present"
+        },
+        {
+          "id": "FT-AUTH-OIDC-GQL",
+          "name": "OIDC auth on GraphQL endpoint",
+          "description": "GraphQL endpoint reachable with a valid OIDC bearer token (mock verifier) and rejected (401) without one",
+          "function": "TestFunctional_AUTH_OIDC_GraphQL",
+          "auth_mode": "oidc",
+          "endpoint": "/graphql"
+        },
+        {
+          "id": "FT-AUTH-MULTI-GQL",
+          "name": "Multi-auth on GraphQL endpoint",
+          "description": "GraphQL endpoint works under multi-auth via API key; no-auth returns 401",
+          "function": "TestFunctional_AUTH_MULTI_GraphQL",
+          "auth_mode": "multi",
+          "auth_methods": ["apikey", "basic"],
+          "endpoint": "/graphql"
+        },
+        {
+          "id": "FT-AUTH-WS",
+          "name": "WebSocket upgrade bypasses auth",
+          "description": "WebSocket upgrade requests bypass the auth middleware by design; the upgrade succeeds on an auth-enabled server and streams random_value messages",
+          "function": "TestFunctional_AUTH_WS_UpgradeSkipsAuth",
+          "auth_mode": "apikey",
+          "endpoint": "/ws"
+        }
+      ]
+    },
+    "metrics": {
+      "description": "Functional assertions on the extended Prometheus metric set exposed at /metrics.",
+      "test_cases": [
+        {
+          "id": "FT-MET-EXIST",
+          "name": "Extended metric set present",
+          "description": "After exercising REST + auth + store, /metrics exposes http_requests_total, http_request_duration_seconds, http_requests_in_flight, auth_attempts_total, store_operations_total, store_operation_duration_seconds, panics_recovered_total, http_response_size_bytes, build_info, go_* and process_* collectors",
+          "function": "TestFunctional_MET_EXIST",
+          "endpoint": "/metrics",
+          "expected_status": 200
+        },
+        {
+          "id": "FT-MET-AUTH",
+          "name": "auth_attempts_total increments",
+          "description": "MET-AUTH-OK/NG: auth_attempts_total{method=apikey,result=success} and {result=failure} both increment on the respective auth paths",
+          "function": "TestFunctional_MET_AUTH",
+          "endpoint": "/metrics"
+        },
+        {
+          "id": "FT-MET-DISABLE",
+          "name": "metrics route absent when disabled",
+          "description": "MET-DISABLE: with metrics disabled the /metrics route is absent from the main router (404/405)",
+          "function": "TestFunctional_MET_DISABLE",
+          "endpoint": "/metrics",
+          "expected_status": 404
+        }
+      ]
+    },
+    "observability": {
+      "description": "Functional assertions on OTLP no-op safety when APP_OTLP_ENDPOINT is unset.",
+      "test_cases": [
+        {
+          "id": "FT-OT-NOOP",
+          "name": "OTLP no-op safety",
+          "description": "OT-NOOP-1/2/3: provider initialised with empty endpoint is disabled (no-op), Tracer() is usable, Shutdown returns nil immediately, and the server serves REST/health normally with tracing as a no-op",
+          "function": "TestFunctional_OT_NOOP_Safety"
         }
       ]
     },
@@ -553,162 +644,146 @@
     }
   },
   "integration_tests": {
+    "description": "Integration tests start in-process server instances per auth mode and drive them against the live docker-compose environment (Vault PKI + Keycloak). The OIDC verifier uses the HOST issuer http://localhost:8090/realms/restapi-test so the issuer check matches Keycloak-issued tokens for host-run tests.",
+    "preconditions": [
+      "docker-compose env up (Vault + Keycloak + postgres)",
+      "Keycloak realm restapi-test with users test-user/test-password and admin-user/admin-password",
+      "Vault-issued mTLS certs present in test/docker-compose/certs"
+    ],
     "test_cases": [
       {
         "id": "IT-001",
-        "name": "Health endpoint accessible",
-        "description": "GET /health returns 200 with healthy status against running server",
+        "name": "Probe endpoints + metric set",
+        "description": "Health, ready and metrics reachable without auth; /metrics exposes the extended metric set (http_*, auth_attempts_total, store_operations_total, store_operation_duration_seconds, http_response_size_bytes, build_info, go_*/process_*)",
         "build_tag": "integration",
-        "function": "TestIntegration_HealthEndpointAccessible"
+        "function": "TestIntegration_ProbeEndpoints"
       },
       {
         "id": "IT-002",
-        "name": "Ready endpoint accessible",
-        "description": "GET /ready returns 200 with ready status against running server",
+        "name": "None mode CRUD",
+        "description": "AM-NONE-1/2: full CRUD with no auth; invalid body yields 400 not 401",
         "build_tag": "integration",
-        "function": "TestIntegration_ReadyEndpointAccessible"
+        "auth_mode": "none",
+        "function": "TestIntegration_NoneMode_CRUD"
       },
       {
         "id": "IT-003",
-        "name": "Metrics endpoint accessible",
-        "description": "GET /metrics returns 200 with Prometheus metrics",
+        "name": "API key mode (REST + GraphQL)",
+        "description": "AM-KEY-1/2/3: valid key on REST+GraphQL, invalid key 401, missing key 401, CRUD lifecycle",
         "build_tag": "integration",
-        "function": "TestIntegration_MetricsEndpointAccessible"
+        "auth_mode": "apikey",
+        "function": "TestIntegration_APIKeyMode"
       },
       {
         "id": "IT-004",
-        "name": "CRUD operations",
-        "description": "Full create, read, update, delete lifecycle against running server",
+        "name": "Basic mode",
+        "description": "AM-BASIC-1/2/3: valid credentials 200, wrong password 401, no credentials 401, CRUD lifecycle",
         "build_tag": "integration",
-        "function": "TestIntegration_CRUDOperations"
+        "auth_mode": "basic",
+        "function": "TestIntegration_BasicMode"
       },
       {
         "id": "IT-005",
-        "name": "API key authentication",
-        "description": "Valid/invalid API key authentication against running server",
+        "name": "OIDC mode password grant (test-user)",
+        "description": "AM-OIDC-1/2/3: Keycloak password-grant token on REST+GraphQL, invalid token 401, non-Bearer 401, CRUD lifecycle",
         "build_tag": "integration",
-        "function": "TestIntegration_APIKeyAuthentication",
-        "skip_condition": "INTEGRATION_API_KEY not set"
+        "auth_mode": "oidc",
+        "function": "TestIntegration_OIDCMode_PasswordGrant",
+        "skip_condition": "Keycloak unavailable"
       },
       {
         "id": "IT-006",
-        "name": "Basic authentication",
-        "description": "Valid/invalid basic auth against running server",
+        "name": "OIDC mode admin-user",
+        "description": "admin-user password-grant token is accepted by the OIDC-protected server",
         "build_tag": "integration",
-        "function": "TestIntegration_BasicAuthentication",
-        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+        "auth_mode": "oidc",
+        "function": "TestIntegration_OIDCMode_AdminUser",
+        "skip_condition": "Keycloak unavailable"
       },
       {
         "id": "IT-007",
-        "name": "Unauthorized access",
-        "description": "Protected endpoints return 401 without credentials",
+        "name": "Multi-auth mode",
+        "description": "AM-MULTI-1/2/3: single multi-auth server accepts API key, basic and OIDC (when Keycloak up); no auth 401",
         "build_tag": "integration",
-        "function": "TestIntegration_UnauthorizedAccess",
-        "skip_condition": "No auth configured"
+        "auth_mode": "multi",
+        "auth_methods": ["apikey", "basic", "oidc"],
+        "function": "TestIntegration_MultiMode"
       },
       {
         "id": "IT-008",
-        "name": "mTLS authentication",
-        "description": "Mutual TLS client certificate authentication",
+        "name": "mTLS mode with Vault PKI certs",
+        "description": "AM-MTLS-1/2: TLS server with client-auth=require using Vault-issued server cert; valid Vault client cert authenticates and drives CRUD; no client cert rejected at handshake",
         "build_tag": "integration",
-        "function": "TestIntegration_MTLSAuthentication",
-        "skip_condition": "mTLS cert paths not set"
-      },
-      {
-        "id": "IT-009",
-        "name": "OIDC authentication",
-        "description": "OIDC/JWT bearer token authentication via Keycloak",
-        "build_tag": "integration",
-        "function": "TestIntegration_OIDCAuthentication",
-        "skip_condition": "Keycloak or OIDC config not available"
-      },
-      {
-        "id": "IT-010",
-        "name": "Multi-auth integration test",
-        "description": "Multi-auth mode with API key and basic auth against running server",
-        "build_tag": "integration",
-        "function": "TestIntegration_MultiAuthAuthentication",
-        "skip_condition": "INTEGRATION_API_KEY and INTEGRATION_BASIC_USER/PASS not set"
-      },
-      {
-        "id": "IT-011",
-        "name": "mTLS with Vault PKI certificates",
-        "description": "Mutual TLS authentication using certificates issued by Vault PKI",
-        "build_tag": "integration",
-        "function": "TestIntegration_MTLSWithVaultPKI",
-        "skip_condition": "Vault PKI and mTLS cert paths not set"
+        "auth_mode": "mtls",
+        "function": "TestIntegration_MTLSMode",
+        "skip_condition": "Vault-issued mTLS certs not present"
       }
     ]
   },
   "e2e_tests": {
+    "description": "E2E tests start a real in-process server per auth mode and interact only through its public HTTP(S) API. Credentials come from the live Keycloak (OIDC password grant) and Vault-issued mTLS certs. The OIDC verifier uses the host issuer http://localhost:8090/realms/restapi-test.",
     "test_cases": [
       {
         "id": "E2E-001",
-        "name": "Full CRUD workflow",
-        "description": "Complete create → read → update → verify → delete → verify journey",
+        "name": "API key workflow",
+        "description": "Full CRUD journey using API key auth",
         "build_tag": "e2e",
-        "function": "TestE2E_FullCRUDWorkflow"
+        "auth_mode": "apikey",
+        "function": "TestE2E_APIKeyWorkflow"
       },
       {
         "id": "E2E-002",
-        "name": "API key workflow",
-        "description": "Authenticate with API key → CRUD operations → cleanup",
+        "name": "Basic auth workflow",
+        "description": "Full CRUD journey using basic auth",
         "build_tag": "e2e",
-        "function": "TestE2E_APIKeyWorkflow",
-        "skip_condition": "INTEGRATION_API_KEY not set"
+        "auth_mode": "basic",
+        "function": "TestE2E_BasicAuthWorkflow"
       },
       {
         "id": "E2E-003",
-        "name": "Basic auth workflow",
-        "description": "Authenticate with basic auth → CRUD operations → cleanup",
+        "name": "OIDC workflow with Keycloak",
+        "description": "Obtain Keycloak password-grant token → full CRUD journey through OIDC-protected server",
         "build_tag": "e2e",
-        "function": "TestE2E_BasicAuthWorkflow",
-        "skip_condition": "INTEGRATION_BASIC_USER/PASS not set"
+        "auth_mode": "oidc",
+        "function": "TestE2E_OIDCWorkflow",
+        "skip_condition": "Keycloak unavailable"
       },
       {
         "id": "E2E-004",
+        "name": "mTLS workflow with Vault PKI",
+        "description": "Full CRUD journey over a mutually authenticated TLS channel using the Vault-issued client certificate",
+        "build_tag": "e2e",
+        "auth_mode": "mtls",
+        "function": "TestE2E_MTLSWorkflow",
+        "skip_condition": "Vault-issued mTLS certs not present"
+      },
+      {
+        "id": "E2E-005",
         "name": "Public endpoints always accessible",
-        "description": "Health, ready, metrics endpoints work without auth",
+        "description": "Health, ready, metrics endpoints work without auth on an auth-enabled server",
         "build_tag": "e2e",
         "function": "TestE2E_PublicEndpointsAlwaysAccessible"
       },
       {
-        "id": "E2E-005",
-        "name": "Unauthorized access denied",
-        "description": "All protected endpoints return 401 without credentials",
-        "build_tag": "e2e",
-        "function": "TestE2E_UnauthorizedAccessDenied",
-        "skip_condition": "No auth configured"
-      },
-      {
         "id": "E2E-006",
-        "name": "Concurrent requests",
-        "description": "10 concurrent authenticated requests all succeed",
+        "name": "Unauthorized access denied",
+        "description": "All protected REST + GraphQL endpoints return 401 without credentials",
         "build_tag": "e2e",
-        "function": "TestE2E_ConcurrentRequests"
+        "function": "TestE2E_UnauthorizedAccessDenied"
       },
       {
         "id": "E2E-007",
         "name": "Graceful degradation",
-        "description": "Server handles invalid auth gracefully without crashing",
+        "description": "Server handles invalid auth without crashing, stays healthy, and /metrics keeps serving auth_attempts_total",
         "build_tag": "e2e",
         "function": "TestE2E_GracefulDegradation"
       },
       {
         "id": "E2E-008",
-        "name": "mTLS workflow",
-        "description": "Authenticate with mTLS client certificate → CRUD operations → cleanup",
+        "name": "Concurrent requests",
+        "description": "10 concurrent authenticated creates all succeed, then cleanup",
         "build_tag": "e2e",
-        "function": "TestE2E_MTLSWorkflow",
-        "skip_condition": "mTLS cert paths not set"
-      },
-      {
-        "id": "E2E-009",
-        "name": "OIDC workflow with Keycloak",
-        "description": "Obtain OIDC token from Keycloak → authenticate → CRUD operations → cleanup",
-        "build_tag": "e2e",
-        "function": "TestE2E_OIDCWorkflowWithKeycloak",
-        "skip_condition": "Keycloak or OIDC config not available"
+        "function": "TestE2E_ConcurrentRequests"
       }
     ]
   },
@@ -760,21 +835,21 @@
       },
       {
         "id": "PERF-007",
-        "name": "OIDC auth overhead",
-        "description": "Latency overhead of OIDC/JWT bearer token authentication",
-        "build_tag": "performance",
-        "function": "BenchmarkOIDCAuth",
-        "skip_condition": "Keycloak or OIDC config not available"
-      },
-      {
-        "id": "PERF-008",
         "name": "Multi-auth overhead",
         "description": "Latency overhead of multi-method authentication (API key + basic)",
         "build_tag": "performance",
         "function": "BenchmarkMultiAuth",
         "skip_condition": "Multi-auth config not available"
+      },
+      {
+        "id": "PERF-008",
+        "name": "API key auth (local server)",
+        "description": "API key auth latency against an in-process local server",
+        "build_tag": "performance",
+        "function": "BenchmarkAPIKeyAuthLocal"
       }
-    ]
+    ],
+    "note": "Benchmark logic is owned by the performance agent; the function names above are kept in sync with test/performance/performance_test.go."
   },
   "test_data": {
     "valid_items": [

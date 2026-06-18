@@ -93,7 +93,10 @@ func startLocalServer(b *testing.B) testServerInfo {
 	}
 
 	logger := zap.NewNop()
-	itemStore := store.NewMemoryStore()
+	// Wrap the memory store with the instrumented decorator so benchmarks
+	// exercise the new store_operations_total / store_operation_duration_seconds
+	// instrumentation code path on every CRUD/GraphQL request.
+	itemStore := store.NewInstrumentedStore(store.NewMemoryStore())
 	srv := server.New(cfg, logger, itemStore, nil)
 
 	go func() {
@@ -411,6 +414,87 @@ func BenchmarkCRUDRead(b *testing.B) {
 	})
 }
 
+// graphqlRequest is the JSON envelope for a GraphQL HTTP POST request.
+type graphqlRequest struct {
+	Query     string         `json:"query"`
+	Variables map[string]any `json:"variables,omitempty"`
+}
+
+// BenchmarkGraphQLQuery measures the latency of a GraphQL `item(id)` query,
+// exercising the GraphQL handler, the schema executor, and the instrumented
+// store Get operation in a single request.
+//
+// It uses a dedicated, isolated in-process server (not the shared one) so the
+// result set is deterministic and does not grow as other CRUD benchmarks seed
+// items into the shared store.
+func BenchmarkGraphQLQuery(b *testing.B) {
+	info := startLocalServerWithAuth(b, "none", "", "")
+	defer info.cleanup()
+
+	baseURL := info.baseURL
+	client := newBenchHTTPClient()
+
+	// Seed exactly one item and query it by ID for a bounded, deterministic
+	// workload independent of other benchmarks.
+	payload, _ := json.Marshal(map[string]any{
+		"name":  "GraphQL Seed",
+		"price": 5.0,
+	})
+	seedReq, _ := http.NewRequest(
+		http.MethodPost, baseURL+"/api/v1/items",
+		bytes.NewReader(payload),
+	)
+	seedReq.Header.Set("Content-Type", "application/json")
+	seedResp, seedErr := client.Do(seedReq)
+	if seedErr != nil {
+		b.Fatalf("GraphQL seed failed: %v", seedErr)
+	}
+	seedBody, _ := io.ReadAll(seedResp.Body)
+	seedResp.Body.Close()
+
+	var seedAPIResp apiResponse
+	if err := json.Unmarshal(seedBody, &seedAPIResp); err != nil {
+		b.Fatalf("Failed to parse seed response: %v", err)
+	}
+	var seeded itemResponse
+	if err := json.Unmarshal(seedAPIResp.Data, &seeded); err != nil {
+		b.Fatalf("Failed to parse seeded item: %v", err)
+	}
+
+	queryBody, _ := json.Marshal(graphqlRequest{
+		Query: "query($id: ID!){ item(id: $id) { id name price } }",
+		Variables: map[string]any{
+			"id": seeded.ID,
+		},
+	})
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			req, _ := http.NewRequest(
+				http.MethodPost,
+				baseURL+"/graphql",
+				bytes.NewReader(queryBody),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				b.Fatalf("GraphQL request failed: %v", err)
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				b.Fatalf(
+					"GraphQL query: expected 200, got %d",
+					resp.StatusCode,
+				)
+			}
+		}
+	})
+}
+
 // startLocalServerWithAuth starts an in-process HTTP server with the
 // specified authentication configuration and returns its base URL and
 // a cleanup function.
@@ -441,7 +525,9 @@ func startLocalServerWithAuth(
 	}
 
 	logger := zap.NewNop()
-	itemStore := store.NewMemoryStore()
+	// Instrument the store so authenticated CRUD/GraphQL paths exercise the
+	// store metrics in addition to the auth_attempts_total instrumentation.
+	itemStore := store.NewInstrumentedStore(store.NewMemoryStore())
 
 	var authenticator auth.Authenticator
 

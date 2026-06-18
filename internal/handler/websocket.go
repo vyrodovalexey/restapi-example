@@ -16,6 +16,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/restapi-example/internal/model"
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
 
 // WebSocket configuration constants.
@@ -82,6 +83,9 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	h.mu.Lock()
 	h.clients[conn] = state
 	h.mu.Unlock()
+
+	// Track live connections for the websocket_active_connections gauge.
+	observability.WebSocketActiveConnections.Inc()
 
 	h.logger.Info("websocket client connected", zap.String("remote_addr", conn.RemoteAddr().String()))
 
@@ -214,6 +218,7 @@ func (h *WebSocketHandler) removeClient(conn *websocket.Conn) {
 	if state, exists := h.clients[conn]; exists {
 		state.cancel()
 		delete(h.clients, conn)
+		observability.WebSocketActiveConnections.Dec()
 		h.logger.Info("websocket client disconnected", zap.String("remote_addr", conn.RemoteAddr().String()))
 	}
 }
@@ -241,6 +246,7 @@ func (h *WebSocketHandler) CloseAllConnections() {
 			h.logger.Debug("error closing connection", zap.Error(err))
 		}
 		delete(h.clients, conn)
+		observability.WebSocketActiveConnections.Dec()
 	}
 	h.mu.Unlock()
 

@@ -2,8 +2,8 @@ apiVersion: v2
 name: restapi-example
 description: A Helm chart for REST API and WebSocket Server
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+version: 0.2.0
+appVersion: "1.1.0"
 keywords:
   - rest-api
   - websocket

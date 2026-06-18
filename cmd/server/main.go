@@ -13,8 +13,20 @@ import (
 
 	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/config"
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 	"github.com/vyrodovalexey/restapi-example/internal/server"
 	"github.com/vyrodovalexey/restapi-example/internal/store"
+)
+
+// Build metadata injected at link time via -ldflags
+// (e.g. -X main.Version=1.2.3). Defaults are used for local/dev builds.
+var (
+	// Version is the semantic version of the build.
+	Version = "dev"
+	// Commit is the VCS commit hash of the build.
+	Commit = "unknown"
+	// BuildTime is the UTC timestamp of the build.
+	BuildTime = "unknown"
 )
 
 func main() {
@@ -48,7 +60,29 @@ func run() int {
 		zap.Bool("metrics_enabled", cfg.MetricsEnabled),
 		zap.String("auth_mode", cfg.AuthMode),
 		zap.Bool("tls_enabled", cfg.TLSEnabled),
+		zap.String("version", Version),
+		zap.String("commit", Commit),
 	)
+
+	// Expose build metadata via the build_info Prometheus gauge.
+	observability.SetBuildInfo(Version, Commit, BuildTime)
+
+	// Root context for telemetry init and reuse across the lifecycle.
+	rootCtx, rootCancel := context.WithCancel(context.Background())
+	defer rootCancel()
+
+	// Initialize OpenTelemetry tracing. When APP_OTLP_ENDPOINT is unset this
+	// installs a no-op tracer (zero network calls, never blocks startup).
+	telemetry := observability.NewProvider(logger)
+	initCtx, initCancel := context.WithTimeout(rootCtx, cfg.ShutdownTimeout)
+	if err := telemetry.Init(initCtx, observability.TracingConfig{
+		OTLPEndpoint:   cfg.OTLPEndpoint,
+		ServiceVersion: Version,
+	}); err != nil {
+		// Telemetry must never prevent the service from starting.
+		logger.Warn("failed to initialize tracing; continuing without OTLP export", zap.Error(err))
+	}
+	initCancel()
 
 	// Create authenticator based on config
 	authenticator, err := createAuthenticator(cfg, logger)
@@ -56,11 +90,11 @@ func run() int {
 		logger.Fatal("failed to create authenticator", zap.Error(err))
 	}
 
-	// Create memory store
-	itemStore := store.NewMemoryStore()
+	// Create memory store wrapped with metrics instrumentation.
+	itemStore := store.NewInstrumentedStore(store.NewMemoryStore())
 
-	// Create and start server (pass authenticator)
-	srv := server.New(cfg, logger, itemStore, authenticator)
+	// Create and start server (pass authenticator + tracer)
+	srv := server.New(cfg, logger, itemStore, authenticator, telemetry.Tracer())
 
 	// Start server in a goroutine
 	serverErrors := make(chan error, 1)
@@ -79,14 +113,19 @@ func run() int {
 	case sig := <-shutdown:
 		logger.Info("shutdown signal received", zap.String("signal", sig.String()))
 
-		// Create shutdown context with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+		// Create shutdown context with timeout (reuse the root context).
+		ctx, cancel := context.WithTimeout(rootCtx, cfg.ShutdownTimeout)
 		defer cancel()
 
 		// Graceful shutdown
 		if err := srv.Shutdown(ctx); err != nil {
 			logger.Error("graceful shutdown failed", zap.Error(err))
 			return 1
+		}
+
+		// Flush any buffered spans within the shutdown deadline.
+		if err := telemetry.Shutdown(ctx); err != nil {
+			logger.Error("telemetry shutdown failed", zap.Error(err))
 		}
 	}
 

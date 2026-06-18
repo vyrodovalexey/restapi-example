@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/restapi-example/internal/auth"
 	"github.com/vyrodovalexey/restapi-example/internal/middleware"
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
 
 // testAuthenticator is a mock authenticator for middleware tests.
@@ -485,6 +487,117 @@ func TestAuth_HealthLiveSubpathBypassesAuth(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d for /health/live (sub-path of public path)",
 			rr.Code, http.StatusOK)
+	}
+}
+
+// authCount reads the current value of auth_attempts_total for a given
+// method/result label pair.
+func authCount(t *testing.T, method, result string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(
+		observability.AuthAttemptsTotal.WithLabelValues(method, result),
+	)
+}
+
+// TestAuth_RecordsSuccessMetric asserts auth_attempts_total increments with
+// the authenticated method and result="success" on a successful auth.
+func TestAuth_RecordsSuccessMetric(t *testing.T) {
+	// Arrange
+	successAuth := &testAuthenticator{
+		info: &auth.AuthInfo{
+			Method:  auth.AuthMethodAPIKey,
+			Subject: "svc",
+		},
+		method: auth.AuthMethodAPIKey,
+	}
+	logger := zap.NewNop()
+
+	authMiddleware := middleware.Auth(successAuth, logger)
+	handler := authMiddleware(successHandler())
+
+	before := authCount(t, string(auth.AuthMethodAPIKey), observability.ResultSuccess)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)
+	rr := httptest.NewRecorder()
+
+	// Act
+	handler.ServeHTTP(rr, req)
+
+	// Assert
+	after := authCount(t, string(auth.AuthMethodAPIKey), observability.ResultSuccess)
+	if after-before != 1 {
+		t.Errorf("auth_attempts_total{apikey,success} delta = %v, want 1", after-before)
+	}
+}
+
+// TestAuth_RecordsFailureMetric asserts auth_attempts_total increments with the
+// authenticator's declared method and result="failure" on a failed auth. It is
+// table-driven across several auth methods.
+func TestAuth_RecordsFailureMetric(t *testing.T) {
+	tests := []struct {
+		name   string
+		method auth.AuthMethod
+	}{
+		{"basic failure", auth.AuthMethodBasic},
+		{"oidc failure", auth.AuthMethodOIDC},
+		{"mtls failure", auth.AuthMethodMTLS},
+		{"multi failure", auth.AuthMethodMulti},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			failAuth := &testAuthenticator{
+				err:    auth.ErrUnauthenticated,
+				method: tt.method,
+			}
+			logger := zap.NewNop()
+
+			authMiddleware := middleware.Auth(failAuth, logger)
+			handler := authMiddleware(successHandler())
+
+			before := authCount(t, string(tt.method), observability.ResultFailure)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/items", nil)
+			rr := httptest.NewRecorder()
+
+			// Act
+			handler.ServeHTTP(rr, req)
+
+			// Assert
+			if rr.Code != http.StatusUnauthorized {
+				t.Errorf("status = %d, want %d", rr.Code, http.StatusUnauthorized)
+			}
+			after := authCount(t, string(tt.method), observability.ResultFailure)
+			if after-before != 1 {
+				t.Errorf("auth_attempts_total{%s,failure} delta = %v, want 1",
+					tt.method, after-before)
+			}
+		})
+	}
+}
+
+// TestAuth_PublicPath_DoesNotRecordMetric asserts no auth metric is recorded
+// for public paths (auth is skipped entirely).
+func TestAuth_PublicPath_DoesNotRecordMetric(t *testing.T) {
+	failAuth := &testAuthenticator{
+		err:    auth.ErrUnauthenticated,
+		method: auth.AuthMethodBasic,
+	}
+	logger := zap.NewNop()
+
+	authMiddleware := middleware.Auth(failAuth, logger)
+	handler := authMiddleware(successHandler())
+
+	before := authCount(t, string(auth.AuthMethodBasic), observability.ResultFailure)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	after := authCount(t, string(auth.AuthMethodBasic), observability.ResultFailure)
+	if after != before {
+		t.Errorf("auth metric changed for public path: before=%v after=%v", before, after)
 	}
 }
 
