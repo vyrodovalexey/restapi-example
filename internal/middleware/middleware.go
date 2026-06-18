@@ -16,6 +16,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go.uber.org/zap"
+
+	"github.com/vyrodovalexey/restapi-example/internal/observability"
 )
 
 // Context key type for request-scoped values.
@@ -54,11 +56,13 @@ var (
 	)
 )
 
-// responseWriter wraps http.ResponseWriter to capture the status code.
+// responseWriter wraps http.ResponseWriter to capture the status code and the
+// number of response body bytes written.
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	written    bool
+	statusCode   int
+	bytesWritten int
+	written      bool
 }
 
 // newResponseWriter creates a new responseWriter.
@@ -78,12 +82,14 @@ func (rw *responseWriter) WriteHeader(code int) {
 	}
 }
 
-// Write writes the response body.
+// Write writes the response body and records the number of bytes written.
 func (rw *responseWriter) Write(b []byte) (int, error) {
 	if !rw.written {
 		rw.WriteHeader(http.StatusOK)
 	}
-	return rw.ResponseWriter.Write(b)
+	n, err := rw.ResponseWriter.Write(b)
+	rw.bytesWritten += n
+	return n, err
 }
 
 // Hijack implements http.Hijacker interface to support WebSocket connections.
@@ -144,6 +150,14 @@ func Logging(logger *zap.Logger) Middleware {
 				zap.String("request_id", getRequestID(r)),
 			}
 
+			// Correlate logs with the active trace when tracing is enabled.
+			if traceID := TraceIDFromContext(r.Context()); traceID != "" {
+				fields = append(fields,
+					zap.String("trace_id", traceID),
+					zap.String("span_id", SpanIDFromContext(r.Context())),
+				)
+			}
+
 			if healthPaths[r.URL.Path] {
 				logger.Debug("http request", fields...)
 			} else {
@@ -159,6 +173,7 @@ func Recovery(logger *zap.Logger) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if err := recover(); err != nil {
+					observability.PanicsRecoveredTotal.Inc()
 					logger.Error("panic recovered",
 						zap.Any("error", err),
 						zap.String("stack", string(debug.Stack())),
@@ -211,6 +226,9 @@ func Metrics() Middleware {
 
 			httpRequestsTotal.WithLabelValues(r.Method, path, status).Inc()
 			httpRequestDuration.WithLabelValues(r.Method, path).Observe(duration)
+			observability.HTTPResponseSizeBytes.
+				WithLabelValues(r.Method, path).
+				Observe(float64(rw.bytesWritten))
 		})
 	}
 }

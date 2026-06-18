@@ -8,745 +8,666 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/vyrodovalexey/restapi-example/internal/auth"
+	"github.com/vyrodovalexey/restapi-example/internal/config"
 )
 
-// serverURL returns the base URL of the server under test.
-func serverURL() string {
-	return getEnvOrDefault(EnvServerURL, DefaultServerURL)
+// ----------------------------------------------------------------------------
+// Server harness builders (one in-process server per auth mode).
+// ----------------------------------------------------------------------------
+
+// startNoneServer starts a server with no authentication.
+func startNoneServer(t *testing.T) *testServer {
+	t.Helper()
+	return startServer(t, &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "none",
+	}, nil)
 }
 
-// TestIntegration_HealthEndpointAccessible verifies that GET /health
-// returns HTTP 200 with a healthy status.
-func TestIntegration_HealthEndpointAccessible(t *testing.T) {
-	t.Parallel()
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-	status, body := doRequest(
-		t, client, http.MethodGet, base+"/health", nil, nil,
-	)
-
-	if status != http.StatusOK {
-		t.Fatalf("Expected 200, got %d. Body: %s", status, body)
+// startAPIKeyServer starts a server with API key authentication.
+func startAPIKeyServer(t *testing.T) *testServer {
+	t.Helper()
+	a, err := auth.NewAPIKeyAuthenticator(apiKeyConfig())
+	if err != nil {
+		t.Fatalf("Failed to create API key authenticator: %v", err)
 	}
-
-	var resp apiResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if !resp.Success {
-		t.Errorf("Expected success=true, got false")
-	}
-
-	var health healthResponse
-	if err := json.Unmarshal(resp.Data, &health); err != nil {
-		t.Fatalf("Failed to parse health data: %v", err)
-	}
-
-	if health.Status != "healthy" {
-		t.Errorf("Expected status 'healthy', got %q", health.Status)
-	}
-
-	t.Logf("Health check passed: status=%s version=%s",
-		health.Status, health.Version)
+	return startServer(t, &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "apikey",
+		APIKeys:        apiKeyConfig(),
+	}, a)
 }
 
-// TestIntegration_ReadyEndpointAccessible verifies that GET /ready
-// returns HTTP 200 with a ready status.
-func TestIntegration_ReadyEndpointAccessible(t *testing.T) {
-	t.Parallel()
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-	status, body := doRequest(
-		t, client, http.MethodGet, base+"/ready", nil, nil,
-	)
-
-	if status != http.StatusOK {
-		t.Fatalf("Expected 200, got %d. Body: %s", status, body)
+// startBasicServer starts a server with HTTP Basic authentication.
+func startBasicServer(t *testing.T) *testServer {
+	t.Helper()
+	users := basicAuthConfig(t)
+	a, err := auth.NewBasicAuthenticator(users)
+	if err != nil {
+		t.Fatalf("Failed to create basic authenticator: %v", err)
 	}
-
-	var resp apiResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-
-	if !resp.Success {
-		t.Errorf("Expected success=true, got false")
-	}
-
-	var ready readyResponse
-	if err := json.Unmarshal(resp.Data, &ready); err != nil {
-		t.Fatalf("Failed to parse ready data: %v", err)
-	}
-
-	if ready.Status != "ready" {
-		t.Errorf("Expected status 'ready', got %q", ready.Status)
-	}
-
-	t.Logf("Ready check passed: status=%s", ready.Status)
+	return startServer(t, &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "basic",
+		BasicAuthUsers: users,
+	}, a)
 }
 
-// TestIntegration_MetricsEndpointAccessible verifies that GET /metrics
-// returns HTTP 200 with Prometheus-formatted metrics.
-func TestIntegration_MetricsEndpointAccessible(t *testing.T) {
-	t.Parallel()
+// startOIDCServer starts a server with OIDC authentication backed by the live
+// Keycloak. The verifier uses the HOST issuer so the issuer check matches
+// tokens minted by Keycloak's host-facing token endpoint.
+func startOIDCServer(t *testing.T) *testServer {
+	t.Helper()
 
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-	status, body := doRequest(
-		t, client, http.MethodGet, base+"/metrics", nil, nil,
-	)
-
-	// Metrics may be disabled; skip if 404 or 405.
-	if status == http.StatusNotFound ||
-		status == http.StatusMethodNotAllowed {
-		t.Skip("Metrics endpoint not enabled on server")
+	verifier, err := auth.NewOIDCTokenVerifier(oidcIssuerURL())
+	if err != nil {
+		t.Skipf("OIDC verifier init failed (Keycloak unavailable?): %v", err)
 	}
+	t.Cleanup(verifier.Stop)
 
-	if status != http.StatusOK {
-		t.Fatalf("Expected 200, got %d. Body: %s", status, body)
-	}
+	// No audience restriction: Keycloak access tokens carry the "account"
+	// audience by default rather than the client id.
+	a := auth.NewOIDCAuthenticator(verifier, "")
 
-	// Prometheus metrics should contain at least one HELP line.
-	if !strings.Contains(string(body), "# HELP") {
-		t.Error("Expected Prometheus metrics format with # HELP")
-	}
-
-	t.Log("Metrics endpoint accessible and returning data")
+	return startServer(t, &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "oidc",
+		OIDCIssuerURL:  oidcIssuerURL(),
+		OIDCClientID:   oidcClientID(),
+	}, a)
 }
 
-// TestIntegration_CRUDOperations exercises the full Create, Read,
-// Update, Delete lifecycle against the running server.
-func TestIntegration_CRUDOperations(t *testing.T) {
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
+// startMultiServer starts a server in multi-auth mode accepting apikey, basic
+// and OIDC (when Keycloak is reachable).
+func startMultiServer(t *testing.T, withOIDC bool) *testServer {
+	t.Helper()
 
-	client := createHTTPClient()
-	headers := buildAuthHeaders(t)
-	headers["Content-Type"] = "application/json"
+	apiKeyAuth, err := auth.NewAPIKeyAuthenticator(apiKeyConfig())
+	if err != nil {
+		t.Fatalf("Failed to create API key authenticator: %v", err)
+	}
 
-	// --- Create ---
-	t.Log("Step 1: Create item")
-	createBody, _ := json.Marshal(map[string]any{
-		"name":        "Integration Test Item",
-		"description": "Created by integration test",
-		"price":       42.00,
+	users := basicAuthConfig(t)
+	basicAuth, err := auth.NewBasicAuthenticator(users)
+	if err != nil {
+		t.Fatalf("Failed to create basic authenticator: %v", err)
+	}
+
+	authenticators := []auth.Authenticator{apiKeyAuth, basicAuth}
+
+	cfg := &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "multi",
+		APIKeys:        apiKeyConfig(),
+		BasicAuthUsers: users,
+	}
+
+	if withOIDC {
+		verifier, verr := auth.NewOIDCTokenVerifier(oidcIssuerURL())
+		if verr != nil {
+			t.Skipf("OIDC verifier init failed: %v", verr)
+		}
+		t.Cleanup(verifier.Stop)
+		authenticators = append(
+			authenticators, auth.NewOIDCAuthenticator(verifier, ""),
+		)
+		cfg.OIDCIssuerURL = oidcIssuerURL()
+		cfg.OIDCClientID = oidcClientID()
+	}
+
+	return startServer(t, cfg, auth.NewMultiAuthenticator(authenticators...))
+}
+
+// startMTLSServer starts a TLS server with client-auth=require using the
+// Vault-issued server cert + CA. The mTLS authenticator validates the
+// presented client certificate.
+func startMTLSServer(t *testing.T) *testServer {
+	t.Helper()
+	skipIfCertsUnavailable(t)
+
+	return startServer(t, &config.Config{
+		MetricsEnabled: true,
+		AuthMode:       "mtls",
+		TLSEnabled:     true,
+		TLSCertPath:    serverCertPath(),
+		TLSKeyPath:     serverKeyPath(),
+		TLSCAPath:      caCertPath(),
+		TLSClientAuth:  "require",
+	}, auth.NewMTLSAuthenticator())
+}
+
+// ----------------------------------------------------------------------------
+// Common header helpers.
+// ----------------------------------------------------------------------------
+
+func apiKeyHeaders() map[string]string {
+	return map[string]string{auth.APIKeyHeader: apiKeyValue()}
+}
+
+func basicAuthHeaders(user, pass string) map[string]string {
+	creds := base64.StdEncoding.EncodeToString([]byte(user + ":" + pass))
+	return map[string]string{"Authorization": "Basic " + creds}
+}
+
+func bearerHeaders(token string) map[string]string {
+	return map[string]string{"Authorization": "Bearer " + token}
+}
+
+// ----------------------------------------------------------------------------
+// Probe endpoints (auth-independent) — exercised against a multi-auth server.
+// ----------------------------------------------------------------------------
+
+// TestIntegration_ProbeEndpoints verifies health, ready and metrics endpoints
+// are reachable without authentication on a server with auth enabled, and that
+// the extended metric set is exposed once the relevant paths are exercised.
+func TestIntegration_ProbeEndpoints(t *testing.T) {
+	ts := startAPIKeyServer(t)
+	client := newHTTPClient()
+
+	// Exercise auth (success + failure) and a store operation so that the
+	// labelled counters (auth_attempts_total, store_operations_total) are
+	// emitted in the exposition (Prometheus omits unobserved label sets).
+	doRequest(t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil, apiKeyHeaders())
+	doRequest(t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+		map[string]string{auth.APIKeyHeader: "bogus"})
+
+	t.Run("health", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/health", nil, nil,
+		)
+		if status != http.StatusOK {
+			t.Fatalf("Expected 200, got %d. Body: %s", status, body)
+		}
+		var resp apiResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Fatalf("Failed to parse response: %v", err)
+		}
+		var health healthResponse
+		if err := json.Unmarshal(resp.Data, &health); err != nil {
+			t.Fatalf("Failed to parse health data: %v", err)
+		}
+		if health.Status != "healthy" {
+			t.Errorf("Expected 'healthy', got %q", health.Status)
+		}
 	})
 
+	t.Run("ready", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/ready", nil, nil,
+		)
+		if status != http.StatusOK {
+			t.Fatalf("Expected 200, got %d. Body: %s", status, body)
+		}
+		var resp apiResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			t.Fatalf("Failed to parse response: %v", err)
+		}
+		var ready readyResponse
+		if err := json.Unmarshal(resp.Data, &ready); err != nil {
+			t.Fatalf("Failed to parse ready data: %v", err)
+		}
+		if ready.Status != "ready" {
+			t.Errorf("Expected 'ready', got %q", ready.Status)
+		}
+	})
+
+	t.Run("metrics", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/metrics", nil, nil,
+		)
+		if status != http.StatusOK {
+			t.Fatalf("Expected 200, got %d", status)
+		}
+		// Verify the new metric set is exposed on a live server.
+		for _, name := range []string{
+			"http_requests_total",
+			"http_request_duration_seconds",
+			"http_requests_in_flight",
+			"auth_attempts_total",
+			"store_operations_total",
+			"store_operation_duration_seconds",
+			"http_response_size_bytes",
+			"build_info",
+			"go_goroutines",
+			"process_cpu_seconds_total",
+		} {
+			if !strings.Contains(string(body), name) {
+				t.Errorf("metrics output missing %q", name)
+			}
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// AM-NONE: no auth mode.
+// ----------------------------------------------------------------------------
+
+// TestIntegration_NoneMode_CRUD verifies that without auth the full CRUD
+// lifecycle works (AM-NONE-1) and validation errors map correctly (AM-NONE-2).
+func TestIntegration_NoneMode_CRUD(t *testing.T) {
+	ts := startNoneServer(t)
+	client := newHTTPClient()
+	runCRUDLifecycle(t, client, ts.baseURL, nil)
+
+	// Negative: invalid body yields 400, not 401.
+	status, _ := doRequest(
+		t, client, http.MethodPost, ts.baseURL+"/api/v1/items",
+		bytes.NewReader([]byte("not json")),
+		map[string]string{"Content-Type": "application/json"},
+	)
+	if status != http.StatusBadRequest {
+		t.Errorf("AM-NONE-2: expected 400 for invalid body, got %d", status)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// AM-KEY: API key mode (positive + negative).
+// ----------------------------------------------------------------------------
+
+// TestIntegration_APIKeyMode covers AM-KEY-1/2/3 across REST and GraphQL.
+func TestIntegration_APIKeyMode(t *testing.T) {
+	ts := startAPIKeyServer(t)
+	client := newHTTPClient()
+
+	t.Run("valid_key_rest", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet,
+			ts.baseURL+"/api/v1/items", nil, apiKeyHeaders(),
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-KEY-1: expected 200, got %d. Body: %s", status, body)
+		}
+	})
+
+	t.Run("valid_key_graphql", func(t *testing.T) {
+		runGraphQLQuery(t, client, ts.baseURL, apiKeyHeaders())
+	})
+
+	t.Run("invalid_key", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			map[string]string{auth.APIKeyHeader: "bogus-key"},
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-KEY-2: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("missing_key", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil, nil,
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-KEY-3: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("crud_lifecycle", func(t *testing.T) {
+		runCRUDLifecycle(t, client, ts.baseURL, apiKeyHeaders())
+	})
+}
+
+// ----------------------------------------------------------------------------
+// AM-BASIC: basic auth mode (positive + negative).
+// ----------------------------------------------------------------------------
+
+// TestIntegration_BasicMode covers AM-BASIC-1/2/3.
+func TestIntegration_BasicMode(t *testing.T) {
+	ts := startBasicServer(t)
+	client := newHTTPClient()
+
+	t.Run("valid_credentials", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			basicAuthHeaders(basicUser(), basicPass()),
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-BASIC-1: expected 200, got %d. Body: %s", status, body)
+		}
+	})
+
+	t.Run("wrong_password", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			basicAuthHeaders(basicUser(), "wrong-password"),
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-BASIC-2: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("no_credentials", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil, nil,
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-BASIC-3: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("crud_lifecycle", func(t *testing.T) {
+		runCRUDLifecycle(
+			t, client, ts.baseURL,
+			basicAuthHeaders(basicUser(), basicPass()),
+		)
+	})
+}
+
+// ----------------------------------------------------------------------------
+// AM-OIDC: OIDC mode against the live Keycloak (password grant).
+// ----------------------------------------------------------------------------
+
+// TestIntegration_OIDCMode_PasswordGrant covers AM-OIDC-1/2/3 for the
+// standard test-user using a Keycloak password-grant token.
+func TestIntegration_OIDCMode_PasswordGrant(t *testing.T) {
+	skipIfKeycloakUnavailable(t)
+
+	token, err := getKeycloakPasswordToken(
+		oidcClientID(), oidcClientSecret(),
+		oidcUsername(), oidcPassword(),
+	)
+	if err != nil {
+		t.Fatalf("Failed to obtain Keycloak token: %v", err)
+	}
+
+	ts := startOIDCServer(t)
+	client := newHTTPClient()
+
+	t.Run("valid_token_rest", func(t *testing.T) {
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			bearerHeaders(token),
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-OIDC-1: expected 200, got %d. Body: %s", status, body)
+		}
+	})
+
+	t.Run("valid_token_graphql", func(t *testing.T) {
+		runGraphQLQuery(t, client, ts.baseURL, bearerHeaders(token))
+	})
+
+	t.Run("invalid_token", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			bearerHeaders("not.a.valid.jwt"),
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-OIDC-2: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("missing_bearer", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			map[string]string{"Authorization": "Token abc"},
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-OIDC-3: expected 401, got %d", status)
+		}
+	})
+
+	t.Run("crud_lifecycle", func(t *testing.T) {
+		runCRUDLifecycle(t, client, ts.baseURL, bearerHeaders(token))
+	})
+}
+
+// TestIntegration_OIDCMode_AdminUser verifies the admin-user token is also
+// accepted by the OIDC-protected server.
+func TestIntegration_OIDCMode_AdminUser(t *testing.T) {
+	skipIfKeycloakUnavailable(t)
+
+	adminUser := getEnvOrDefault(EnvOIDCAdminUser, "admin-user")
+	adminPass := getEnvOrDefault(EnvOIDCAdminPass, "admin-password")
+
+	token, err := getKeycloakPasswordToken(
+		oidcClientID(), oidcClientSecret(), adminUser, adminPass,
+	)
+	if err != nil {
+		t.Fatalf("Failed to obtain admin Keycloak token: %v", err)
+	}
+
+	ts := startOIDCServer(t)
+	client := newHTTPClient()
+
 	status, body := doRequest(
-		t, client, http.MethodPost,
-		base+"/api/v1/items",
+		t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+		bearerHeaders(token),
+	)
+	if status != http.StatusOK {
+		t.Errorf("admin-user OIDC: expected 200, got %d. Body: %s", status, body)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// AM-MULTI: multi-auth mode accepts multiple methods (AM-MULTI-1/2/3).
+// ----------------------------------------------------------------------------
+
+// TestIntegration_MultiMode verifies that multiple methods are accepted by a
+// single multi-auth server instance, and that no/invalid credentials fail.
+func TestIntegration_MultiMode(t *testing.T) {
+	kcUp := keycloakReachable()
+	ts := startMultiServer(t, kcUp)
+	client := newHTTPClient()
+
+	t.Run("api_key", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			apiKeyHeaders(),
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-MULTI(apikey): expected 200, got %d", status)
+		}
+	})
+
+	t.Run("basic_auth", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+			basicAuthHeaders(basicUser(), basicPass()),
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-MULTI(basic): expected 200, got %d", status)
+		}
+	})
+
+	if kcUp {
+		t.Run("oidc", func(t *testing.T) {
+			token, err := getKeycloakPasswordToken(
+				oidcClientID(), oidcClientSecret(),
+				oidcUsername(), oidcPassword(),
+			)
+			if err != nil {
+				t.Fatalf("Failed to obtain token: %v", err)
+			}
+			status, _ := doRequest(
+				t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil,
+				bearerHeaders(token),
+			)
+			if status != http.StatusOK {
+				t.Errorf("AM-MULTI(oidc): expected 200, got %d", status)
+			}
+		})
+	}
+
+	t.Run("no_auth", func(t *testing.T) {
+		status, _ := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil, nil,
+		)
+		if status != http.StatusUnauthorized {
+			t.Errorf("AM-MULTI-2: expected 401, got %d", status)
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// AM-MTLS: mutual TLS using Vault-issued client cert (AM-MTLS-1/2/3).
+// ----------------------------------------------------------------------------
+
+// TestIntegration_MTLSMode covers AM-MTLS-1 (valid cert) and AM-MTLS-2/3
+// (handshake rejection without / with an untrusted cert).
+func TestIntegration_MTLSMode(t *testing.T) {
+	ts := startMTLSServer(t)
+
+	t.Run("valid_client_cert", func(t *testing.T) {
+		client, err := newTLSClient(
+			caCertPath(), clientCertPath(), clientKeyPath(),
+		)
+		if err != nil {
+			t.Fatalf("Failed to build TLS client: %v", err)
+		}
+		status, body := doRequest(
+			t, client, http.MethodGet, ts.baseURL+"/api/v1/items", nil, nil,
+		)
+		if status != http.StatusOK {
+			t.Errorf("AM-MTLS-1: expected 200, got %d. Body: %s", status, body)
+		}
+		// Exercise CRUD over the mTLS channel.
+		runCRUDLifecycle(t, client, ts.baseURL, nil)
+	})
+
+	t.Run("no_client_cert_rejected", func(t *testing.T) {
+		// A client trusting the CA but presenting no client cert must be
+		// rejected at the TLS handshake (require client auth).
+		noCertClient := newNoCertTLSClient(t)
+		_, err := noCertClient.Get(ts.baseURL + "/api/v1/items")
+		if err == nil {
+			t.Errorf("AM-MTLS-2: expected handshake failure without client cert")
+		}
+	})
+}
+
+// ----------------------------------------------------------------------------
+// Shared CRUD + GraphQL drivers.
+// ----------------------------------------------------------------------------
+
+// runCRUDLifecycle drives create → read → update → verify → delete → verify
+// against the REST API using the provided authentication headers.
+func runCRUDLifecycle(
+	t *testing.T,
+	client *http.Client,
+	base string,
+	authHeaders map[string]string,
+) {
+	t.Helper()
+
+	headers := map[string]string{"Content-Type": "application/json"}
+	for k, v := range authHeaders {
+		headers[k] = v
+	}
+
+	// Create.
+	createBody, _ := json.Marshal(map[string]any{
+		"name":        "Integration CRUD Item",
+		"description": "created by integration test",
+		"price":       42.0,
+	})
+	status, body := doRequest(
+		t, client, http.MethodPost, base+"/api/v1/items",
 		bytes.NewReader(createBody), headers,
 	)
-
 	if status != http.StatusCreated {
-		t.Fatalf("Create: expected 201, got %d. Body: %s",
-			status, body)
+		t.Fatalf("Create: expected 201, got %d. Body: %s", status, body)
 	}
 
 	var createResp apiResponse
 	if err := json.Unmarshal(body, &createResp); err != nil {
 		t.Fatalf("Failed to parse create response: %v", err)
 	}
-
 	var created itemResponse
 	if err := json.Unmarshal(createResp.Data, &created); err != nil {
 		t.Fatalf("Failed to parse created item: %v", err)
 	}
-
 	if created.ID == "" {
 		t.Fatal("Created item has empty ID")
 	}
-	t.Logf("Created item ID=%s", created.ID)
 
-	// --- Read ---
-	t.Log("Step 2: Read item")
-	itemURL := fmt.Sprintf(
-		"%s/api/v1/items/%s", base, created.ID,
-	)
-	status, body = doRequest(
-		t, client, http.MethodGet, itemURL, nil, headers,
-	)
+	itemURL := fmt.Sprintf("%s/api/v1/items/%s", base, created.ID)
 
+	// Read.
+	status, body = doRequest(t, client, http.MethodGet, itemURL, nil, headers)
 	if status != http.StatusOK {
-		t.Fatalf("Read: expected 200, got %d. Body: %s",
-			status, body)
+		t.Fatalf("Read: expected 200, got %d. Body: %s", status, body)
 	}
 
-	var readResp apiResponse
-	if err := json.Unmarshal(body, &readResp); err != nil {
-		t.Fatalf("Failed to parse read response: %v", err)
-	}
-
-	var readItem itemResponse
-	if err := json.Unmarshal(readResp.Data, &readItem); err != nil {
-		t.Fatalf("Failed to parse read item: %v", err)
-	}
-
-	if readItem.Name != "Integration Test Item" {
-		t.Errorf(
-			"Read: expected name 'Integration Test Item', got %q",
-			readItem.Name,
-		)
-	}
-
-	// --- Update ---
-	t.Log("Step 3: Update item")
+	// Update.
 	updateBody, _ := json.Marshal(map[string]any{
-		"name":        "Updated Integration Item",
-		"description": "Updated by integration test",
-		"price":       84.00,
+		"name":        "Integration CRUD Item Updated",
+		"description": "updated",
+		"price":       84.0,
 	})
-
 	status, body = doRequest(
 		t, client, http.MethodPut, itemURL,
 		bytes.NewReader(updateBody), headers,
 	)
-
 	if status != http.StatusOK {
-		t.Fatalf("Update: expected 200, got %d. Body: %s",
-			status, body)
+		t.Fatalf("Update: expected 200, got %d. Body: %s", status, body)
 	}
 
-	// Verify update
-	status, body = doRequest(
-		t, client, http.MethodGet, itemURL, nil, headers,
-	)
-
+	// Verify update.
+	status, body = doRequest(t, client, http.MethodGet, itemURL, nil, headers)
+	if status != http.StatusOK {
+		t.Fatalf("Verify: expected 200, got %d", status)
+	}
 	var verifyResp apiResponse
-	if err := json.Unmarshal(body, &verifyResp); err != nil {
-		t.Fatalf("Failed to parse verify response: %v", err)
-	}
-
+	_ = json.Unmarshal(body, &verifyResp)
 	var verifyItem itemResponse
-	if err := json.Unmarshal(verifyResp.Data, &verifyItem); err != nil {
-		t.Fatalf("Failed to parse verify item: %v", err)
+	_ = json.Unmarshal(verifyResp.Data, &verifyItem)
+	if verifyItem.Name != "Integration CRUD Item Updated" {
+		t.Errorf("Verify: unexpected name %q", verifyItem.Name)
 	}
 
-	if verifyItem.Name != "Updated Integration Item" {
-		t.Errorf(
-			"Update verify: expected 'Updated Integration Item', got %q",
-			verifyItem.Name,
-		)
-	}
-
-	// --- Delete ---
-	t.Log("Step 4: Delete item")
-	status, body = doRequest(
-		t, client, http.MethodDelete, itemURL, nil, headers,
-	)
-
+	// Delete.
+	status, _ = doRequest(t, client, http.MethodDelete, itemURL, nil, headers)
 	if status != http.StatusNoContent {
-		t.Fatalf("Delete: expected 204, got %d. Body: %s",
-			status, body)
+		t.Fatalf("Delete: expected 204, got %d", status)
 	}
 
-	// Verify deletion
-	status, _ = doRequest(
-		t, client, http.MethodGet, itemURL, nil, headers,
-	)
-
+	// Verify delete.
+	status, _ = doRequest(t, client, http.MethodGet, itemURL, nil, headers)
 	if status != http.StatusNotFound {
-		t.Errorf("Delete verify: expected 404, got %d", status)
+		t.Errorf("Verify delete: expected 404, got %d", status)
 	}
-
-	t.Log("CRUD operations completed successfully")
 }
 
-// TestIntegration_APIKeyAuthentication tests API key authentication
-// when an API key is configured via environment.
-func TestIntegration_APIKeyAuthentication(t *testing.T) {
-	t.Parallel()
-
-	apiKey := os.Getenv(EnvAPIKey)
-	if apiKey == "" {
-		t.Skip("INTEGRATION_API_KEY not set, skipping API key test")
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-
-	// Request with valid API key should succeed.
-	headers := map[string]string{
-		"X-API-Key":    apiKey,
-		"Content-Type": "application/json",
-	}
-
-	status, body := doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, headers,
-	)
-
-	if status != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with valid API key, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	// Request with invalid API key should fail.
-	badHeaders := map[string]string{
-		"X-API-Key": "invalid-key-12345",
-	}
-
-	status, _ = doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, badHeaders,
-	)
-
-	if status != http.StatusUnauthorized {
-		t.Errorf(
-			"Expected 401 with invalid API key, got %d", status,
-		)
-	}
-
-	t.Log("API key authentication test passed")
-}
-
-// TestIntegration_BasicAuthentication tests HTTP Basic authentication
-// when credentials are configured via environment.
-func TestIntegration_BasicAuthentication(t *testing.T) {
-	t.Parallel()
-
-	user := os.Getenv(EnvBasicUser)
-	pass := os.Getenv(EnvBasicPass)
-	if user == "" || pass == "" {
-		t.Skip(
-			"INTEGRATION_BASIC_USER/PASS not set, skipping basic auth",
-		)
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-
-	// Build request with Basic auth.
-	req, err := http.NewRequest(
-		http.MethodGet, base+"/api/v1/items", nil,
-	)
-	if err != nil {
-		t.Fatalf("Failed to create request: %v", err)
-	}
-	req.SetBasicAuth(user, pass)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("Request failed: %v", err)
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with valid credentials, got %d",
-			resp.StatusCode,
-		)
-	}
-
-	// Request with wrong password should fail.
-	reqBad, _ := http.NewRequest(
-		http.MethodGet, base+"/api/v1/items", nil,
-	)
-	reqBad.SetBasicAuth(user, "wrong-password")
-
-	respBad, err := client.Do(reqBad)
-	if err != nil {
-		t.Fatalf("Bad auth request failed: %v", err)
-	}
-	respBad.Body.Close()
-
-	if respBad.StatusCode != http.StatusUnauthorized {
-		t.Errorf(
-			"Expected 401 with wrong password, got %d",
-			respBad.StatusCode,
-		)
-	}
-
-	t.Log("Basic authentication test passed")
-}
-
-// TestIntegration_UnauthorizedAccess verifies that protected endpoints
-// return 401 when no authentication is provided and the server has
-// auth enabled.
-func TestIntegration_UnauthorizedAccess(t *testing.T) {
-	t.Parallel()
-
-	// This test only makes sense when auth is configured.
-	apiKey := os.Getenv(EnvAPIKey)
-	user := os.Getenv(EnvBasicUser)
-	if apiKey == "" && user == "" {
-		t.Skip(
-			"No auth configured, skipping unauthorized access test",
-		)
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-
-	endpoints := []string{
-		"/api/v1/items",
-	}
-
-	for _, ep := range endpoints {
-		t.Run(ep, func(t *testing.T) {
-			status, body := doRequest(
-				t, client, http.MethodGet,
-				base+ep, nil, nil,
-			)
-
-			if status != http.StatusUnauthorized {
-				t.Errorf(
-					"Expected 401 for %s without auth, got %d. Body: %s",
-					ep, status, body,
-				)
-			}
-		})
-	}
-
-	t.Log("Unauthorized access test passed")
-}
-
-// TestIntegration_MTLSAuthentication tests mutual TLS authentication
-// when certificate paths are configured via environment.
-func TestIntegration_MTLSAuthentication(t *testing.T) {
-	t.Parallel()
-
-	caCert := os.Getenv(EnvCACertPath)
-	clientCert := os.Getenv(EnvClientCert)
-	clientKey := os.Getenv(EnvClientKey)
-
-	if caCert == "" || clientCert == "" || clientKey == "" {
-		t.Skip("mTLS cert paths not set, skipping mTLS test")
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client, err := createTLSClient(caCert, clientCert, clientKey)
-	if err != nil {
-		t.Fatalf("Failed to create TLS client: %v", err)
-	}
-
-	status, body := doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, nil,
-	)
-
-	if status != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with valid client cert, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	t.Log("mTLS authentication test passed")
-}
-
-// TestIntegration_OIDCAuthentication tests OIDC/JWT bearer token
-// authentication when Keycloak is available.
-func TestIntegration_OIDCAuthentication(t *testing.T) {
-	t.Parallel()
-
-	keycloakURL := getEnvOrDefault(
-		EnvKeycloakURL, DefaultKeycloakURL,
-	)
-
-	// Check if Keycloak is reachable.
-	skipIfServiceUnavailable(t, keycloakURL)
-
-	clientID := os.Getenv("INTEGRATION_OIDC_CLIENT_ID")
-	clientSecret := os.Getenv("INTEGRATION_OIDC_CLIENT_SECRET")
-	realm := os.Getenv("INTEGRATION_OIDC_REALM")
-
-	if clientID == "" || clientSecret == "" || realm == "" {
-		t.Skip("OIDC client config not set, skipping OIDC test")
-	}
-
-	token, err := getKeycloakToken(
-		keycloakURL, realm, clientID, clientSecret,
-	)
-	if err != nil {
-		t.Fatalf("Failed to obtain Keycloak token: %v", err)
-	}
-
-	base := serverURL()
-	client := createHTTPClient()
-
-	headers := map[string]string{
-		"Authorization": "Bearer " + token,
-	}
-
-	status, body := doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, headers,
-	)
-
-	if status != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with valid OIDC token, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	t.Log("OIDC authentication test passed")
-}
-
-// TestIntegration_OIDCPasswordGrant tests OIDC authentication using
-// password grant tokens from Keycloak.
-func TestIntegration_OIDCPasswordGrant(t *testing.T) {
-	t.Parallel()
-
-	keycloakURL := getEnvOrDefault(
-		EnvKeycloakURL, DefaultKeycloakURL,
-	)
-
-	skipIfServiceUnavailable(t, keycloakURL)
-
-	clientID := os.Getenv("INTEGRATION_OIDC_CLIENT_ID")
-	clientSecret := os.Getenv("INTEGRATION_OIDC_CLIENT_SECRET")
-	realm := os.Getenv("INTEGRATION_OIDC_REALM")
-	username := os.Getenv("INTEGRATION_OIDC_USERNAME")
-	password := os.Getenv("INTEGRATION_OIDC_PASSWORD")
-
-	if clientID == "" || clientSecret == "" || realm == "" {
-		t.Skip("OIDC client config not set, skipping")
-	}
-	if username == "" || password == "" {
-		t.Skip(
-			"OIDC username/password not set, skipping password grant",
-		)
-	}
-
-	token, err := getKeycloakPasswordToken(
-		keycloakURL, realm, clientID, clientSecret,
-		username, password,
-	)
-	if err != nil {
-		t.Fatalf("Failed to obtain password grant token: %v", err)
-	}
-
-	if token == "" {
-		t.Fatal("Received empty token from password grant")
-	}
-
-	base := serverURL()
-	client := createHTTPClient()
-
-	headers := map[string]string{
-		"Authorization": "Bearer " + token,
-	}
-
-	status, body := doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, headers,
-	)
-
-	if status != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with password grant token, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	t.Log("OIDC password grant authentication test passed")
-}
-
-// TestIntegration_MultiAuthMethods tests that the server accepts
-// multiple authentication methods when configured in multi mode.
-func TestIntegration_MultiAuthMethods(t *testing.T) {
-	t.Parallel()
-
-	apiKey := os.Getenv(EnvAPIKey)
-	user := os.Getenv(EnvBasicUser)
-	pass := os.Getenv(EnvBasicPass)
-
-	if apiKey == "" && (user == "" || pass == "") {
-		t.Skip(
-			"Neither API key nor basic auth configured, " +
-				"skipping multi-auth test",
-		)
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailable(t, base+"/health")
-
-	client := createHTTPClient()
-
-	// Sub-test: API key authentication.
-	if apiKey != "" {
-		t.Run("api_key", func(t *testing.T) {
-			headers := map[string]string{
-				"X-API-Key": apiKey,
-			}
-
-			status, body := doRequest(
-				t, client, http.MethodGet,
-				base+"/api/v1/items", nil, headers,
-			)
-
-			if status != http.StatusOK {
-				t.Errorf(
-					"Expected 200 with API key, got %d. Body: %s",
-					status, body,
-				)
-			}
-		})
-	}
-
-	// Sub-test: Basic authentication.
-	if user != "" && pass != "" {
-		t.Run("basic_auth", func(t *testing.T) {
-			creds := base64.StdEncoding.EncodeToString(
-				[]byte(user + ":" + pass),
-			)
-			headers := map[string]string{
-				"Authorization": "Basic " + creds,
-			}
-
-			status, body := doRequest(
-				t, client, http.MethodGet,
-				base+"/api/v1/items", nil, headers,
-			)
-
-			if status != http.StatusOK {
-				t.Errorf(
-					"Expected 200 with basic auth, got %d. Body: %s",
-					status, body,
-				)
-			}
-		})
-	}
-
-	// Sub-test: No authentication should fail.
-	t.Run("no_auth", func(t *testing.T) {
-		status, body := doRequest(
-			t, client, http.MethodGet,
-			base+"/api/v1/items", nil, nil,
-		)
-
-		if status != http.StatusUnauthorized {
-			t.Errorf(
-				"Expected 401 without auth, got %d. Body: %s",
-				status, body,
-			)
-		}
-	})
-
-	t.Log("Multi-auth methods test passed")
-}
-
-// TestIntegration_MTLSWithTLSClient tests mTLS authentication using
-// a TLS-aware client and the TLS service availability check.
-func TestIntegration_MTLSWithTLSClient(t *testing.T) {
-	t.Parallel()
-
-	caCert := os.Getenv(EnvCACertPath)
-	clientCert := os.Getenv(EnvClientCert)
-	clientKey := os.Getenv(EnvClientKey)
-
-	if caCert == "" || clientCert == "" || clientKey == "" {
-		t.Skip("mTLS cert paths not set, skipping")
-	}
-
-	base := serverURL()
-	skipIfServiceUnavailableTLS(
-		t, base+"/health", caCert, clientCert, clientKey,
-	)
-
-	client, err := createTLSClient(caCert, clientCert, clientKey)
-	if err != nil {
-		t.Fatalf("Failed to create TLS client: %v", err)
-	}
-
-	// Verify list items works with mTLS.
-	status, body := doRequest(
-		t, client, http.MethodGet,
-		base+"/api/v1/items", nil, nil,
-	)
-
-	if status != http.StatusOK {
-		t.Errorf(
-			"Expected 200 with mTLS client cert, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	// Verify CRUD create works with mTLS.
-	createBody := []byte(
-		`{"name":"mTLS Test Item","price":10.00}`,
-	)
-	headers := map[string]string{
-		"Content-Type": "application/json",
-	}
-
-	status, body = doRequest(
-		t, client, http.MethodPost,
-		base+"/api/v1/items",
-		bytes.NewReader(createBody), headers,
-	)
-
-	if status != http.StatusCreated {
-		t.Errorf(
-			"Expected 201 for mTLS create, got %d. Body: %s",
-			status, body,
-		)
-	}
-
-	// Clean up: parse created item and delete it.
-	var createResp apiResponse
-	if err := json.Unmarshal(body, &createResp); err == nil {
-		var created itemResponse
-		if err := json.Unmarshal(
-			createResp.Data, &created,
-		); err == nil && created.ID != "" {
-			itemURL := fmt.Sprintf(
-				"%s/api/v1/items/%s", base, created.ID,
-			)
-			doRequest(
-				t, client, http.MethodDelete,
-				itemURL, nil, nil,
-			)
-		}
-	}
-
-	t.Log("mTLS with TLS client test passed")
-}
-
-// buildAuthHeaders returns a header map populated with authentication
-// credentials from environment variables, if available.
-func buildAuthHeaders(t *testing.T) map[string]string {
+// runGraphQLQuery issues a basic GraphQL items query and asserts a 200 with no
+// GraphQL errors.
+func runGraphQLQuery(
+	t *testing.T,
+	client *http.Client,
+	base string,
+	authHeaders map[string]string,
+) {
 	t.Helper()
 
-	headers := make(map[string]string)
-
-	if apiKey := os.Getenv(EnvAPIKey); apiKey != "" {
-		headers["X-API-Key"] = apiKey
-		return headers
+	headers := map[string]string{"Content-Type": "application/json"}
+	for k, v := range authHeaders {
+		headers[k] = v
 	}
 
-	user := os.Getenv(EnvBasicUser)
-	pass := os.Getenv(EnvBasicPass)
-	if user != "" && pass != "" {
-		creds := base64.StdEncoding.EncodeToString(
-			[]byte(user + ":" + pass),
-		)
-		headers["Authorization"] = "Basic " + creds
+	payload, _ := json.Marshal(map[string]string{
+		"query": "{ items { id name price } }",
+	})
+	status, body := doRequest(
+		t, client, http.MethodPost, base+"/graphql",
+		bytes.NewReader(payload), headers,
+	)
+	if status != http.StatusOK {
+		t.Fatalf("GraphQL: expected 200, got %d. Body: %s", status, body)
 	}
 
-	return headers
+	var resp struct {
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("GraphQL: failed to parse response: %v", err)
+	}
+	if len(resp.Errors) > 0 {
+		t.Errorf("GraphQL: unexpected errors: %v", resp.Errors)
+	}
 }

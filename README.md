@@ -10,7 +10,8 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - **Multiple Authentication Modes** - No auth, mTLS, OIDC, Basic Auth, API Key, and Multi-mode support
 - **TLS/mTLS Support** - Secure communication with client certificate authentication
 - **Vault Integration** - Dynamic PKI certificate management
-- **Prometheus Metrics** - Built-in observability with HTTP request metrics
+- **Prometheus Metrics** - Built-in observability with HTTP, auth, store, WebSocket, and runtime metrics
+- **OpenTelemetry Tracing** - Optional OTLP span export (gated by `APP_OTLP_ENDPOINT`) with W3C context propagation
 - **Structured Logging** - JSON-formatted logs using Zap logger
 - **Graceful Shutdown** - Proper handling of shutdown signals with connection draining
 - **CORS Support** - Configurable Cross-Origin Resource Sharing
@@ -30,6 +31,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 - [Configuration](#configuration)
 - [API Endpoints](#api-endpoints)
 - [GraphQL API](#graphql-api)
+- [Observability](#observability)
 - [Kubernetes Deployment](#kubernetes-deployment)
 - [Testing](#testing)
 - [Performance](#performance)
@@ -76,7 +78,7 @@ A production-ready REST API and WebSocket server built with Go. This project dem
 
 ### Prerequisites
 
-- Go 1.25.7 or later
+- Go 1.26.4 or later
 - Docker (optional, for containerized deployment)
 - Docker Compose (optional, for test environment)
 - Kubernetes + Helm (optional, for K8s deployment)
@@ -184,7 +186,7 @@ Configuration is managed through environment variables. Environment variables ta
 | `APP_LOG_LEVEL` | `info` | Log level (debug, info, warn, error) |
 | `APP_SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown timeout |
 | `APP_METRICS_ENABLED` | `true` | Enable Prometheus metrics |
-| `APP_OTLP_ENDPOINT` | `` | OTLP endpoint for telemetry |
+| `APP_OTLP_ENDPOINT` | `` | OTLP endpoint for OpenTelemetry trace export. When empty, a no-op tracer is used (no spans exported). See [Observability](#observability) |
 | `APP_AUTH_MODE` | `none` | Auth mode (none, mtls, oidc, basic, apikey, multi) |
 | `APP_TLS_ENABLED` | `false` | Enable TLS |
 | `APP_TLS_CERT_PATH` | `` | TLS certificate path |
@@ -621,11 +623,24 @@ GET /metrics
 ```
 
 **Available Metrics:**
-| Metric | Type | Description |
-|--------|------|-------------|
-| `http_requests_total` | Counter | Total HTTP requests by method, path, status |
-| `http_request_duration_seconds` | Histogram | Request duration distribution |
-| `http_requests_in_flight` | Gauge | Current number of requests being processed |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `http_requests_total` | Counter | `method`, `path`, `status` | Total HTTP requests |
+| `http_request_duration_seconds` | Histogram | `method`, `path` | Request duration distribution |
+| `http_requests_in_flight` | Gauge | — | Current number of requests being processed |
+| `http_response_size_bytes` | Histogram | `method`, `path` | HTTP response body size distribution |
+| `auth_attempts_total` | Counter | `method`, `result` | Authentication attempts by method and result (`success`/`failure`) |
+| `websocket_active_connections` | Gauge | — | Currently active WebSocket connections |
+| `store_operations_total` | Counter | `operation`, `result` | Store operations by operation and result |
+| `store_operation_duration_seconds` | Histogram | `operation` | Store operation latency distribution |
+| `panics_recovered_total` | Counter | — | Panics recovered by the Recovery middleware |
+| `build_info` | Gauge | `version`, `commit`, `build_time` | Build metadata of the running binary (value is always 1) |
+| `go_*` | various | — | Go runtime collectors (GC, goroutines, memory, etc.) |
+| `process_*` | various | — | Process collectors (CPU, memory, file descriptors, etc.) |
+
+The `path` label always uses the normalized route template (for example, `/api/v1/items/{id}`) rather than the raw request path, keeping label cardinality bounded.
+
+**Note:** The full metric set is exposed on both the main router (`/metrics`) and the dedicated probe port (`/metrics` on port 9090 by default).
 
 ---
 
@@ -672,6 +687,56 @@ All error responses follow a consistent format:
 | `404` | Not Found |
 | `409` | Conflict (resource already exists) |
 | `500` | Internal Server Error |
+
+---
+
+## Observability
+
+The server provides two complementary observability signals: Prometheus metrics and OpenTelemetry (OTLP) distributed tracing. Both are implemented in the `internal/observability` package.
+
+### Prometheus Metrics
+
+Metrics are exposed in the Prometheus exposition format at `/metrics`. They are available on **both** the main router and the dedicated probe port (9090 by default), so scrapers can collect them without authentication or TLS. See the [Metrics Endpoint](#metrics-endpoint) section for the full list of exposed metrics.
+
+Metrics collection is controlled by `APP_METRICS_ENABLED` (default `true`).
+
+### OpenTelemetry Tracing (OTLP)
+
+Distributed tracing is implemented using the OpenTelemetry SDK and is **gated entirely by the `APP_OTLP_ENDPOINT` environment variable**:
+
+- **Disabled (default):** When `APP_OTLP_ENDPOINT` is empty, a no-op tracer provider is installed. Spans are created with zero runtime overhead, no network connections are attempted, and startup is never blocked. This is the safe default for environments without a collector.
+- **Enabled:** When `APP_OTLP_ENDPOINT` is set, spans are exported to the configured OTLP collector using a batch span processor, and the batch is flushed on graceful shutdown.
+
+#### Exporter Selection
+
+The transport is selected automatically from the endpoint scheme:
+
+| `APP_OTLP_ENDPOINT` value | Transport |
+|---------------------------|-----------|
+| `http://...` or `https://...` | OTLP over HTTP |
+| any other value (e.g. `collector:4317`) | OTLP over gRPC |
+
+#### Context Propagation
+
+The server uses the W3C Trace Context standard. Inbound `traceparent` and `tracestate` headers are extracted so server spans are correctly parented to upstream traces, and outbound contexts are injectable for downstream propagation.
+
+#### HTTP Tracing Middleware
+
+A tracing middleware creates one server span per request. The span is named by the matched mux route template (for example, `/api/v1/items/{id}`) to keep span cardinality bounded, and records method, route, and status attributes. The active `trace_id` and `span_id` are added to the structured log output for traced requests, allowing logs and traces to be correlated.
+
+#### Graceful Shutdown
+
+The tracer provider is wired into the graceful shutdown path in `cmd/server/main.go`. On `SIGINT`/`SIGTERM`, the batch processor is flushed within the shutdown timeout context so buffered spans are not lost.
+
+#### Example
+
+```bash
+# Export traces to an OTLP collector over gRPC
+APP_OTLP_ENDPOINT=otel-collector:4317 ./server
+
+# Export traces to an OTLP collector over HTTP
+APP_OTLP_ENDPOINT=http://otel-collector:4318 ./server
+```
 
 ---
 
@@ -788,12 +853,14 @@ The project includes comprehensive testing at multiple levels with dedicated tes
 
 ### Test Structure
 
-- **`test/functional/`** - Functional tests (REST API + GraphQL + WebSocket + Auth) - 28 test cases including multi-auth and OIDC
-- **`test/integration/`** - Integration tests (requires external services) - includes OIDC password grant and multi-auth methods
-- **`test/e2e/`** - End-to-end tests - includes mTLS and OIDC workflows with Keycloak
-- **`test/performance/`** - Performance benchmarks - includes multi-auth and API key auth benchmarks
+- **`test/functional/`** - Functional tests (REST API + GraphQL + WebSocket + Auth), covering all six auth modes in-process
+- **`test/integration/`** - Integration tests (requires the Docker Compose environment), including OIDC password grant and multi-auth methods
+- **`test/e2e/`** - End-to-end tests - mTLS and OIDC workflows against Vault and Keycloak
+- **`test/performance/`** - Performance benchmarks (Go benchmarks) plus a yandex-tank load config (`load.yaml` + `ammo.txt`)
 - **`test/cases/`** - Test case definitions (JSON)
-- **`test/docker-compose/`** - Docker Compose test environment
+- **`test/docker-compose/`** - Docker Compose test environment (Vault PKI + Keycloak OIDC + PostgreSQL)
+
+All six authentication modes (`none`, `mtls`, `basic`, `apikey`, `oidc`, `multi`) are exercised across the functional, integration, and e2e suites. mTLS uses certificates issued by Vault's PKI engine, and OIDC uses tokens issued by Keycloak.
 
 ### Running Tests
 
@@ -819,15 +886,21 @@ make test-all-coverage
 
 ### Test Environment
 
-The project includes a comprehensive test environment using Docker Compose with Vault (PKI) and Keycloak (OIDC) for testing authentication features.
+The project includes a comprehensive test environment using Docker Compose with Vault (PKI) and Keycloak (OIDC) for testing authentication features. It is defined in `test/docker-compose/docker-compose.yml`. On startup, init jobs configure Vault's PKI engine (issuing the mTLS certificates used by the tests) and import the Keycloak realm, client, and users.
 
 #### Starting the Test Environment
 
 ```bash
-# Start all services (Vault, Keycloak, PostgreSQL, REST API server)
+# Start all services (Vault, Keycloak, PostgreSQL) and run the init jobs
 make test-env-up
 
-# Stop the test environment
+# Wait until all services are healthy and init jobs have completed
+make test-env-wait
+
+# Check service status
+make test-env-status
+
+# Stop the test environment (and remove volumes)
 make test-env-down
 
 # View logs
@@ -835,10 +908,13 @@ make test-env-logs
 ```
 
 The test environment provides:
-- **Vault** (http://localhost:8200) - PKI certificate management
-- **Keycloak** (http://localhost:8090) - OIDC identity provider with realm `restapi-test`, client `restapi-server`, and test users (`test-user`, `admin-user`)
+- **Vault** (http://localhost:8200) - PKI engine that issues the server, client, and test-client certificates used for mTLS. The mTLS test certificates are Vault-issued, not self-signed.
+- **Keycloak** (http://localhost:8090) - OIDC identity provider with realm `restapi-test` and client `restapi-server`. Two users are provisioned:
+  - `test-user` / `test-password` with scope `api:read`
+  - `admin-user` / `admin-password` with scopes `api:read`, `api:write`, and `admin`
 - **PostgreSQL** - Keycloak database
-- **REST API Server** (https://localhost:8080) - Application under test
+
+**Note on the OIDC issuer:** the server (when started inside the compose network) uses the issuer `http://keycloak_web:8090/realms/restapi-test`, while integration and e2e tests run on the host use the host-reachable issuer `http://localhost:8090/realms/restapi-test`.
 
 #### Test Coverage
 
@@ -856,17 +932,22 @@ make test-coverage-check
 
 ### Benchmark Results
 
-The project includes comprehensive performance benchmarks. Here are sample results from the latest run:
+The project includes comprehensive performance benchmarks. Here are sample results from the latest run (Go 1.26.4, Apple M1 Max):
 
-| Benchmark | Operations | ns/op | B/op | allocs/op |
-|-----------|------------|-------|------|-----------|
-| BenchmarkHealthEndpoint-10 | 62,427 | 20,964 | 9,709 | 118 |
-| BenchmarkCRUDCreate-10 | 66,046 | 17,970 | 13,390 | 160 |
-| BenchmarkCRUDRead-10 | 62,896 | 16,053 | 10,768 | 126 |
-| BenchmarkConcurrentRequests/concurrency_1-10 | 77,272 | 16,675 | 10,164 | 122 |
-| BenchmarkConcurrentRequests/concurrency_5-10 | 117,372 | 11,293 | 10,172 | 122 |
-| BenchmarkConcurrentRequests/concurrency_10-10 | 119,530 | 10,878 | 10,197 | 122 |
-| BenchmarkConcurrentRequests/concurrency_25-10 | 106,312 | 11,254 | 10,155 | 121 |
+| Benchmark | ns/op |
+|-----------|-------|
+| BenchmarkHealthEndpoint | 17,981 |
+| BenchmarkCRUDCreate | 17,566 |
+| BenchmarkCRUDRead | 15,573 |
+| BenchmarkGraphQLQuery | 31,363 |
+| BenchmarkAPIKeyAuthLocal | 15,958 |
+| BenchmarkMultiAuth | 15,619 |
+| BenchmarkConcurrentRequests/concurrency_1 | 15,772 |
+| BenchmarkConcurrentRequests/concurrency_5 | 10,913 |
+| BenchmarkConcurrentRequests/concurrency_10 | 10,455 |
+| BenchmarkConcurrentRequests/concurrency_25 | 10,750 |
+
+**Observability overhead:** with the tracing middleware and extended metrics in place, the per-request overhead is approximately +14 allocs/op with no measurable wall-clock regression and a 0% error rate.
 
 ### Running Performance Tests
 
@@ -884,10 +965,20 @@ go tool pprof mem.prof
 
 ### Performance Characteristics
 
-- **Health endpoint**: ~62K ops/sec with minimal memory allocation
-- **CRUD operations**: ~60-66K ops/sec with reasonable memory usage
-- **Concurrent performance**: Scales well up to 10 concurrent connections
-- **Memory efficiency**: Low allocation rates across all operations
+- **Health and CRUD endpoints**: ~15-18 μs/op with minimal memory allocation
+- **GraphQL queries**: ~31 μs/op (includes schema execution overhead)
+- **Authenticated requests**: API-key and multi-auth paths add negligible overhead (~16 μs/op)
+- **Concurrent performance**: Per-request latency improves with concurrency, scaling well up to 25 concurrent connections
+- **Observability overhead**: Tracing (no-op when disabled) and the extended metrics add no measurable wall-clock regression
+
+### Load Testing (yandex-tank)
+
+A [yandex-tank](https://yandextank.readthedocs.io/) load configuration is provided for HTTP load testing:
+
+- **Config:** `test/performance/load.yaml`
+- **Ammo file:** `test/performance/ammo.txt`
+
+Point the config at a running instance of the server (configured with the desired auth mode) to drive a load profile against the REST and GraphQL endpoints.
 
 ---
 
@@ -944,8 +1035,8 @@ git push origin v1.0.0
 
 The pipeline is configured in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) with:
 
-- **Go Version**: 1.25.7
-- **golangci-lint**: v2.8.0
+- **Go Version**: 1.26.4
+- **golangci-lint**: v2.12.2
 - **Coverage Upload**: Codecov integration
 - **Container Registry**: GitHub Container Registry (ghcr.io)
 - **Security Scanning**: Trivy, govulncheck, SonarCloud
@@ -1024,6 +1115,13 @@ The `internal/auth/` package provides a flexible authentication system:
 - **`oidc_verifier.go`** - Full OIDC JWT token verification implementation
 - **`multi.go`** - Multi-mode authentication combiner
 
+### Observability Package
+
+The `internal/observability/` package centralizes telemetry:
+
+- **`metrics.go`** - Prometheus collectors (domain metrics, build info, and Go runtime/process collectors)
+- **`tracing.go`** - OpenTelemetry tracer provider, OTLP exporter (HTTP/gRPC), W3C propagation, and a safe no-op default
+
 ### Server Architecture
 
 The application runs two HTTP servers:
@@ -1035,12 +1133,15 @@ The application runs two HTTP servers:
 
 Main server requests flow through the following middleware (in order):
 
-1. **Recovery** - Catches panics and returns 500 error
+1. **Recovery** - Catches panics and returns 500 error (increments `panics_recovered_total`)
 2. **RequestID** - Generates/propagates request IDs
-3. **Metrics** - Records Prometheus metrics (if enabled)
-4. **Authentication** - Validates credentials based on auth mode
-5. **Logging** - Logs request details
-6. **CORS** - Handles cross-origin requests
+3. **Tracing** - Starts an OpenTelemetry server span, extracts W3C trace context, and correlates `trace_id`/`span_id` with logs (no-op when `APP_OTLP_ENDPOINT` is unset)
+4. **Metrics** - Records Prometheus metrics (if enabled)
+5. **Authentication** - Validates credentials based on auth mode
+6. **Logging** - Logs request details
+7. **CORS** - Handles cross-origin requests
+
+The Tracing middleware is placed early in the chain (after Recovery and RequestID, before Metrics and Authentication) so the span captures the full request lifecycle.
 
 The probe server serves endpoints directly without middleware for optimal performance and reliability.
 

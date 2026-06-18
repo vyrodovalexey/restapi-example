@@ -19,6 +19,15 @@ import (
 	"github.com/vyrodovalexey/restapi-example/internal/store"
 )
 
+// GraphQL field name constants. Extracted to package-level constants to avoid
+// duplicated string literals across schema definitions (goconst).
+const (
+	fieldID          = "id"
+	fieldName        = "name"
+	fieldDescription = "description"
+	fieldPrice       = "price"
+)
+
 // GraphQLHandler handles GraphQL API requests for items.
 type GraphQLHandler struct {
 	store   store.Store
@@ -81,16 +90,16 @@ func (h *GraphQLHandler) buildItemType() *graphql.Object {
 	return graphql.NewObject(graphql.ObjectConfig{
 		Name: "Item",
 		Fields: graphql.Fields{
-			"id": &graphql.Field{
+			fieldID: &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 			},
-			"name": &graphql.Field{
+			fieldName: &graphql.Field{
 				Type: graphql.NewNonNull(graphql.String),
 			},
-			"description": &graphql.Field{
+			fieldDescription: &graphql.Field{
 				Type: graphql.String,
 			},
-			"price": &graphql.Field{
+			fieldPrice: &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Float),
 			},
 			"createdAt": &graphql.Field{
@@ -120,13 +129,13 @@ func (h *GraphQLHandler) buildCreateItemInput() *graphql.InputObject {
 	return graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "CreateItemInput",
 		Fields: graphql.InputObjectConfigFieldMap{
-			"name": &graphql.InputObjectFieldConfig{
+			fieldName: &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.String),
 			},
-			"description": &graphql.InputObjectFieldConfig{
+			fieldDescription: &graphql.InputObjectFieldConfig{
 				Type: graphql.String,
 			},
-			"price": &graphql.InputObjectFieldConfig{
+			fieldPrice: &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.Float),
 			},
 		},
@@ -138,13 +147,13 @@ func (h *GraphQLHandler) buildUpdateItemInput() *graphql.InputObject {
 	return graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "UpdateItemInput",
 		Fields: graphql.InputObjectConfigFieldMap{
-			"name": &graphql.InputObjectFieldConfig{
+			fieldName: &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.String),
 			},
-			"description": &graphql.InputObjectFieldConfig{
+			fieldDescription: &graphql.InputObjectFieldConfig{
 				Type: graphql.String,
 			},
-			"price": &graphql.InputObjectFieldConfig{
+			fieldPrice: &graphql.InputObjectFieldConfig{
 				Type: graphql.NewNonNull(graphql.Float),
 			},
 		},
@@ -165,7 +174,7 @@ func (h *GraphQLHandler) buildQueryType(itemType *graphql.Object) *graphql.Objec
 			"item": &graphql.Field{
 				Type: itemType,
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
+					fieldID: &graphql.ArgumentConfig{
 						Type: graphql.NewNonNull(graphql.ID),
 					},
 				},
@@ -200,7 +209,7 @@ func (h *GraphQLHandler) buildMutationType(
 			"updateItem": &graphql.Field{
 				Type: graphql.NewNonNull(itemType),
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
+					fieldID: &graphql.ArgumentConfig{
 						Type: graphql.NewNonNull(graphql.ID),
 					},
 					"input": &graphql.ArgumentConfig{
@@ -214,7 +223,7 @@ func (h *GraphQLHandler) buildMutationType(
 			"deleteItem": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Args: graphql.FieldConfigArgument{
-					"id": &graphql.ArgumentConfig{
+					fieldID: &graphql.ArgumentConfig{
 						Type: graphql.NewNonNull(graphql.ID),
 					},
 				},
@@ -251,7 +260,7 @@ func (h *GraphQLHandler) resolveItems(p graphql.ResolveParams) (any, error) {
 func (h *GraphQLHandler) resolveItem(p graphql.ResolveParams) (any, error) {
 	ctx := p.Context
 
-	id, ok := p.Args["id"].(string)
+	id, ok := p.Args[fieldID].(string)
 	if !ok || id == "" {
 		return nil, fmt.Errorf("invalid item ID")
 	}
@@ -296,7 +305,7 @@ func (h *GraphQLHandler) resolveCreateItem(p graphql.ResolveParams) (any, error)
 func (h *GraphQLHandler) resolveUpdateItem(p graphql.ResolveParams) (any, error) {
 	ctx := p.Context
 
-	id, ok := p.Args["id"].(string)
+	id, ok := p.Args[fieldID].(string)
 	if !ok || id == "" {
 		return nil, fmt.Errorf("invalid item ID")
 	}
@@ -327,7 +336,7 @@ func (h *GraphQLHandler) resolveUpdateItem(p graphql.ResolveParams) (any, error)
 func (h *GraphQLHandler) resolveDeleteItem(p graphql.ResolveParams) (any, error) {
 	ctx := p.Context
 
-	id, ok := p.Args["id"].(string)
+	id, ok := p.Args[fieldID].(string)
 	if !ok || id == "" {
 		return false, fmt.Errorf("invalid item ID")
 	}
@@ -345,15 +354,15 @@ func (h *GraphQLHandler) resolveDeleteItem(p graphql.ResolveParams) (any, error)
 func (h *GraphQLHandler) parseItemInput(inputMap map[string]any) model.Item {
 	var item model.Item
 
-	if name, ok := inputMap["name"].(string); ok {
+	if name, ok := inputMap[fieldName].(string); ok {
 		item.Name = name
 	}
 
-	if description, ok := inputMap["description"].(string); ok {
+	if description, ok := inputMap[fieldDescription].(string); ok {
 		item.Description = description
 	}
 
-	if price, ok := inputMap["price"].(float64); ok {
+	if price, ok := inputMap[fieldPrice].(float64); ok {
 		item.Price = price
 	}
 

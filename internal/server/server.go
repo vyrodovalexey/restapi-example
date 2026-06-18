@@ -13,6 +13,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"github.com/vyrodovalexey/restapi-example/internal/auth"
@@ -32,25 +34,33 @@ type Server struct {
 	logger        *zap.Logger
 	wsHandler     *handler.WebSocketHandler
 	authenticator auth.Authenticator
+	tracer        trace.Tracer
 	initErr       error // deferred error from initialization (e.g. TLS config)
 }
 
 // New creates a new Server instance.
 // The authenticator parameter is optional; pass nil for no authentication.
+// An optional tracer may be supplied; when omitted (or nil) the global OTel
+// tracer is used, which is a no-op when tracing is disabled. Accepting it as a
+// variadic keeps the constructor backward compatible with existing callers.
 // If TLS configuration fails, the error is deferred and returned by Start().
 func New(
 	cfg *config.Config,
 	logger *zap.Logger,
 	itemStore store.Store,
 	authenticator auth.Authenticator,
+	tracer ...trace.Tracer,
 ) *Server {
 	router := mux.NewRouter()
+
+	t := resolveTracer(tracer)
 
 	s := &Server{
 		router:        router,
 		config:        cfg,
 		logger:        logger,
 		authenticator: authenticator,
+		tracer:        t,
 	}
 
 	s.setupMiddleware()
@@ -60,6 +70,15 @@ func New(
 	s.initErr = s.setupHTTPServer()
 
 	return s
+}
+
+// resolveTracer returns the supplied tracer or falls back to the global OTel
+// tracer (a no-op when tracing is disabled).
+func resolveTracer(tracer []trace.Tracer) trace.Tracer {
+	if len(tracer) > 0 && tracer[0] != nil {
+		return tracer[0]
+	}
+	return otel.Tracer("github.com/vyrodovalexey/restapi-example/internal/server")
 }
 
 // setupMiddleware configures the middleware chain.
@@ -82,6 +101,13 @@ func (s *Server) setupMiddleware() {
 	// Apply middleware in order (first applied = outermost)
 	s.router.Use(mux.MiddlewareFunc(middleware.Recovery(s.logger)))
 	s.router.Use(mux.MiddlewareFunc(middleware.RequestID()))
+
+	// Tracing runs early (after Recovery/RequestID, before Metrics/Auth) so a
+	// server span captures the full request. It is safe and near-zero overhead
+	// when tracing is the no-op provider.
+	s.router.Use(mux.MiddlewareFunc(
+		middleware.Tracing(s.tracer, otel.GetTextMapPropagator()),
+	))
 
 	// Add metrics middleware if enabled
 	if s.config.MetricsEnabled {

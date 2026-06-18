@@ -41,6 +41,10 @@ COVERAGE_THRESHOLD := 70
 GOLANGCI_LINT := golangci-lint
 GOVULNCHECK := govulncheck
 
+# Pinned tool versions (keep in sync with .github/workflows/ci.yml)
+# Requires Go 1.26.4 toolchain (see go.mod).
+GOLANGCI_LINT_VERSION := v2.12.2
+
 # ==============================================================================
 # Default target
 # ==============================================================================
@@ -131,6 +135,11 @@ test-all-coverage: ## Run all tests with combined coverage
 	@echo "==> Running all tests with coverage..."
 	$(GO) test -race -coverprofile=$(COVERAGE_FILE) -covermode=atomic ./...
 	$(GO) tool cover -func=$(COVERAGE_FILE)
+
+.PHONY: test-observability
+test-observability: ## Run observability (OTLP/metrics) package tests
+	@echo "==> Running observability tests..."
+	$(GO) test -race -v ./internal/observability/... ./internal/middleware/...
 
 .PHONY: test-all
 test-all: test test-functional ## Run all tests (unit + functional)
@@ -251,7 +260,7 @@ dev: ## Run with hot reload (requires air)
 .PHONY: install-tools
 install-tools: ## Install development tools
 	@echo "==> Installing development tools..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 	go install golang.org/x/vuln/cmd/govulncheck@latest
 	go install github.com/air-verse/air@latest
 
